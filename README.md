@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.5.4**.
+Version **1.5.5**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -375,6 +375,8 @@ slack:
 ```
 
 This switch does not hide the Issue description diff, the subject link, or comments. The `events.issue.updated` switches still decide which changes cause a notification and reach the formatter; this switch only controls whether changes to hidden metadata fields appear in the card. For `custom_fields`, a boolean shows or hides all visible custom fields; a map uses `default` for unspecified IDs. The IDs are Redmine custom field IDs, independent of field names and translated labels.
+
+Custom field metadata uses Redmine's standard display formatting when the notification is generated. Enumeration IDs resolve to option names, user/version references resolve to names, and boolean values use Redmine's localized Yes/No labels. Multiple values are comma-separated; ordinary numeric fields remain numeric. No additional configuration or ID-to-name mapping is required.
 
 Existing `metadata.issue.created` / `metadata.issue.updated` maps are still read for compatibility. Replace them with the single `metadata.issue` map when editing your YAML; do not mix the two forms. The former per-field `slack.issue_changes` map and `slack.issue_change_details` switch are no longer used. Use `issue_changes_when_hidden` for hidden-field changes and `events.issue.updated` for notification triggers.
 
@@ -1278,6 +1280,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.5.5** | Resolve custom field metadata to Redmine display values, including enumeration names, referenced names, and localized boolean labels. |
 | **1.5.4** | Show actors in every operation notification, customize headers with YAML variables, and reuse the configured product name across messages. |
 | **1.5.3** | Render saved Slack quotes and bare Slack URLs as cards in description and comment editor previews. |
 | **1.5.2** | Fix corrupted HTML notification emails when Roadie inlines CSS after Slack images are embedded. Preserve Japanese text, inline images, and the plain-text alternative. |

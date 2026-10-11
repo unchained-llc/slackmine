@@ -874,7 +874,7 @@ module Slackmine
           custom_field = custom_value.custom_field
           next unless custom_field && custom_field_enabled?(custom_field.id, action: action)
 
-          value = Array(custom_value.value).reject { |item| item.to_s.empty? }.join(', ')
+          value = custom_field_value_text(custom_value)
           fields << ['custom_fields', value.empty? ? text(message('values', 'unset')) : text(value[0, 1800]), custom_field.name]
         end
         group = issue_metadata_group(action)
@@ -883,6 +883,18 @@ module Slackmine
         fields << ['custom_fields', text(message('values', 'none'))] if setting == true && fields.length == count
       end
       fields
+    end
+
+    def custom_field_value_text(custom_value, view: nil)
+      raw = Array(custom_value.value).reject { |item| item.to_s.empty? }.join(', ')
+      return '' if raw.empty?
+
+      format = custom_value.custom_field.format
+      return raw unless format
+
+      view ||= ApplicationController.helpers
+      formatted = format.formatted_custom_value(view, custom_value, false)
+      view.format_object(formatted, html: false).to_s
     end
 
     def issue_link(related)

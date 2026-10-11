@@ -3266,6 +3266,35 @@ class WorkObjectDetailsTest < Minitest::Test
 end
 
 class NotificationDisplaySettingsTest < Minitest::Test
+  def test_custom_metadata_resolves_records_and_booleans_without_html
+    view = Object.new
+    view.define_singleton_method(:format_object) do |value, html:|
+      raise 'HTML must be disabled' if html
+      render = ->(item) { item == true ? 'Yes' : item == false ? 'No' : item.to_s }
+      value.is_a?(Array) ? value.map(&render).join(', ') : render.call(value)
+    end
+    record = Struct.new(:name) { def to_s; name; end }
+    cases = [
+      ['33', record.new('Payment option')],
+      ['57', record.new('Bank & account')],
+      [['33', '57'], [record.new('Payment option'), record.new('Bank & account')]],
+      ['0', false], ['1', true], ['1', 1], ['text', 'text']
+    ]
+    expected = ['Payment option', 'Bank & account', 'Payment option, Bank & account', 'No', 'Yes', '1', 'text']
+    cases.zip(expected).each do |(raw, resolved), label|
+      format = Object.new
+      format.define_singleton_method(:formatted_custom_value) do |helper, custom_value, html|
+        raise 'Wrong display context' unless helper.equal?(view) && custom_value.value == raw && html == false
+        resolved
+      end
+      value = OpenStruct.new(custom_field: OpenStruct.new(format: format), value: raw)
+      assert_equal label, Slackmine::Formatter.custom_field_value_text(value, view: view)
+    end
+    # Unset fields must not become false/No or invoke a record lookup.
+    value = OpenStruct.new(custom_field: nil, value: '')
+    assert_equal '', Slackmine::Formatter.custom_field_value_text(value, view: view)
+  end
+
   def test_optional_issue_metadata_includes_selected_version_relation_and_custom_field
     project = OpenStruct.new(name: 'Agentic')
     related = OpenStruct.new(id: 12, subject: 'Related & visible')
