@@ -250,8 +250,9 @@ messages:
   images:
     alt: 画像
     link_label: '画像: %{name}'
-  # Headers support actor, event, icon, project, subject, product_name, noun, action.
+  # Headers support avatar, actor, event, icon, project, subject, product_name, noun, action.
   # Issue and Comment headers also support id. Override per project as needed.
+  # Avatars are disabled by default; add %{avatar} explicitly to display one.
   notification_headers:
     issue: "%{icon} %{actor} *%{event}*"
     comment: "%{icon} %{actor} *%{event}*"

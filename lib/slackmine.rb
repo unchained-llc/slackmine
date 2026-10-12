@@ -379,21 +379,65 @@ module Slackmine
       end
 
       payload = payload.dup
+      actor_id = payload.delete('_slackmine_actor_id')
+      avatar_parts = payload.delete('_slackmine_avatar_parts')
       comment_issue_id = payload.delete('_slackmine_comment_issue_id')
       thread_payload = payload.delete('_slackmine_thread_comment_payload')
       if comment_issue_id && effective_config.dig('slack', 'comment_notifications_in_threads') == true
         thread_ts = CommentThreads.latest_thread(comment_issue_id, channel, token)
         if thread_ts
           payload = thread_payload if thread_payload.is_a?(Hash)
+          actor_id = nil if thread_payload.is_a?(Hash)
+          avatar_parts = nil if thread_payload.is_a?(Hash)
           payload = payload.merge('thread_ts' => thread_ts)
         end
       end
+      payload = with_notification_avatar(payload, actor_id, token, heading_parts: avatar_parts) if actor_id
       add_images(payload, image_names, journal_id, token, issue_id: issue_id) if image_names.present? && (journal_id || issue_id)
       post_message(payload, channel, token)
     end
   rescue StandardError => e
     Rails.logger.error("Slackmine: #{e.class}: #{e.message}")
     raise
+  end
+
+  def with_notification_avatar(payload, actor_id, token, heading_parts: nil)
+    heading = payload.dig('attachments', 0, 'blocks', 0)
+    return payload unless heading && heading['type'] == 'section' && heading.dig('text', 'type') == 'mrkdwn'
+    return payload if heading['accessory']
+    return payload unless heading_parts && heading_parts.length.between?(2, 5)
+
+    actor = User.find_by(id: actor_id)
+    slack_id = slack_user_id_for(actor)
+    return payload unless slack_id
+
+    cache_key = "slackmine/notification-avatar-inline/#{Digest::SHA256.hexdigest(token)}/#{slack_id}"
+    avatar = Rails.cache.fetch(cache_key, expires_in: 600) do
+      response = slack_api('users.info', { 'user' => slack_id }, token, form: true, open_timeout: 2, read_timeout: 3)
+      profile = response.dig('user', 'profile') || {}
+      candidate = %w[image_48 image_32 image_24].map { |key| profile[key] }.find { |value| !value.to_s.empty? }
+      uri = URI.parse(candidate.to_s)
+      uri.scheme == 'https' && uri.host && !uri.userinfo ? uri.to_s : ''
+    rescue SlackApiError, URI::InvalidURIError, Timeout::Error, IOError, SystemCallError
+      ''
+    end
+    return payload if avatar.to_s.empty?
+
+    image = { 'type' => 'image', 'image_url' => avatar, 'alt_text' => actor.name.to_s.truncate(2000) }
+    elements = []
+    heading_parts.each_with_index do |part, index|
+      elements << image.dup if index.positive?
+      elements << heading['text'].merge('text' => part.strip) unless part.strip.empty?
+    end
+    blocks = payload.dig('attachments', 0, 'blocks').dup
+    blocks[0] = { 'type' => 'context', 'elements' => elements }
+    attachments = payload['attachments'].dup
+    attachments[0] = attachments[0].merge('blocks' => blocks)
+    payload.merge('attachments' => attachments)
+  rescue StandardError => e
+    # An optional profile lookup must never prevent the notification delivery.
+    Rails.logger.warn("Slackmine: notification avatar unavailable: #{e.class}")
+    payload
   end
 
   def post_message(payload, channel, token)

@@ -292,6 +292,8 @@ notifications. Due-reminder email remains outside mail suppression.
 
 ![Notification content](docs/images/features/notification-formatting.webp)
 
+Event headings omit avatars by default. Add `%{avatar}` explicitly to a `messages.notification_headers` template to show the actor's Slack avatar. The plugin resolves the Slack user through the `users` mapping or `slack.auto_map_users_by_name` and retrieves the image with `users:read`. Avatars are cached for ten minutes per Bot Token and Slack user. Unmapped users, missing images, and lookup failures retain the existing heading. Compact comment notifications inside threads are excluded. Place `%{avatar}` in `messages.notification_headers` to choose its inline position. The default order is icon, then actor and event text. Inline images use a Slack context block, whose text is smaller than a normal section. Templates without `%{avatar}` omit the image and retain the normal section text size.
+
 The card contains an event heading, a link to the Redmine record, and relevant text or changed fields. Issue creation and updates include the configured current-value metadata; comment-only and deletion notifications do not. Other event types show their metadata unless disabled below. `slack.attachment_color` changes the card's left border:
 
 ```yaml
@@ -326,11 +328,12 @@ For Issues, use one `slack.metadata.issue` map for both creation and updates. A 
 | `time_entry` | `project`, `updater`, `hours`, `spent_on` |
 | `version` | `project`, `updater`, `status`, `due_date` |
 
-Operation notification headings show the actor independently of metadata visibility. Configure each kind under `messages.notification_headers`: `issue`, `comment`, `wiki`, `document`, `file`, `message`, `news`, `news_comment`, `time_entry`, `version`, and `project`. All headers support `%{actor}`, `%{event}`, `%{icon}`, `%{project}`, `%{subject}`, `%{product_name}`, `%{noun}`, and `%{action}`. Issue and Comment headers also support `%{id}`. Project-specific message overrides apply. The legacy `templates.issue_updated_header` is used only when `notification_headers.issue` is not configured.
+Operation notification headings show the actor independently of metadata visibility. Configure each kind under `messages.notification_headers`: `issue`, `comment`, `wiki`, `document`, `file`, `message`, `news`, `news_comment`, `time_entry`, `version`, and `project`. All headers support `%{actor}`, `%{event}`, `%{icon}`, `%{avatar}` (Slack avatar), `%{project}`, `%{subject}`, `%{product_name}`, `%{noun}`, and `%{action}`. Issue and Comment headers also support `%{id}`. Project-specific message overrides apply. The legacy `templates.issue_updated_header` is used only when `notification_headers.issue` is not configured.
 
 ```yaml
 messages:
   notification_headers:
+    issue: "%{icon} %{actor} *%{event}*"
     comment: "%{icon} %{actor} *%{event}*"
     news: "%{actor} · %{project} · *%{event}*"
   work_objects:

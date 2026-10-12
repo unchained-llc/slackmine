@@ -301,6 +301,243 @@ class AutomaticUserMappingTest < Minitest::Test
   end
 end
 
+class NotificationAvatarTest < Minitest::Test
+  def setup
+    @actor = User.new
+    @actor.login = 'kota'
+    @actor.mail = 'kota@example.com'
+    @actor.name = 'Kota'
+    @actor.define_singleton_method(:id) { 7 }
+    @project = OpenStruct.new(identifier: 'agentic', name: 'Agentic')
+    @settings = { 'slack' => { 'bot_token' => 'token', 'default_channel_id' => 'C123' },
+                  'users' => { 'kota' => 'U123' } }
+    @cache = AutomaticUserMappingTest::MemoryCache.new
+    @avatar = 'https://avatars.slack-edge.com/kota_48.jpg'
+  end
+
+  def card
+    Slackmine::Formatter.payload('Kota updated', actor: @actor, blocks: [
+      Slackmine::Formatter.section_text("🔄 Kota#{Slackmine::Formatter::AVATAR_MARKER} *Issue updated*"),
+      Slackmine::Formatter.section_text('*Changes*\nOpen → Closed')
+    ])
+  end
+
+  def deliver(source, api)
+    result = nil
+    Slackmine.stub(:config, @settings) do
+      Rails.stub(:cache, @cache) do
+        Rails.stub(:logger, OpenStruct.new) do
+          User.stub(:find_by, ->(id:) { assert_equal 7, id; @actor }) do
+            Slackmine.stub(:slack_api, api) do
+              Slackmine.stub(:post_message, ->(payload, channel, token) {
+                assert_equal 'C123', channel
+                assert_equal @settings.dig('slack', 'bot_token'), token
+                result = payload
+              }) { Slackmine.notify(source, project: @project) }
+            end
+          end
+        end
+      end
+    end
+    result
+  end
+
+  def configured_card(template)
+    @settings['messages'] = { 'notification_headers' => { 'issue' => template } }
+    Slackmine.stub(:config, @settings) do
+      Slackmine::Formatter.generic_payload(noun: 'Issue', action: 'updated', subject: 'Subject',
+        url: 'https://redmine.example/issues/42', project: @project, actor: @actor)
+    end
+  end
+
+  def test_yaml_avatar_placeholder_controls_inline_order_after_job_serialization
+    {
+      '%{icon}%{actor} %{avatar} *%{event}*' => ['🔄Kota', '<avatar>', '*Issue updated*'],
+      '%{icon} %{avatar} %{actor} *%{event}*' => ['🔄', '<avatar>', 'Kota *Issue updated*'],
+      '%{avatar} %{icon} %{actor} *%{event}*' => ['<avatar>', '🔄 Kota *Issue updated*'],
+      '%{icon} %{actor} *%{event}* %{avatar}' => ['🔄 Kota *Issue updated*', '<avatar>'],
+      '%{avatar}' => ['<avatar>']
+    }.each do |template, expected|
+      source = JSON.parse(JSON.generate(configured_card(template)))
+      refute_includes JSON.generate(source['attachments']), 'slackmine_avatar'
+      result = deliver(source, ->(*) { { 'user' => { 'profile' => { 'image_48' => @avatar } } } })
+      heading = result.dig('attachments', 0, 'blocks', 0)
+      assert_equal 'context', heading['type']
+      assert_equal expected, heading['elements'].map { |item| item['type'] == 'image' ? '<avatar>' : item['text'] }
+      assert_equal @avatar, heading['elements'].find { |item| item['type'] == 'image' }['image_url']
+      refute heading.key?('accessory')
+      refute result.key?('_slackmine_avatar_parts')
+      refute_includes JSON.generate(result), 'slackmine_avatar'
+    end
+  end
+
+  def test_yaml_avatar_placeholder_is_removed_when_image_or_actor_is_unavailable
+    template = '%{icon} %{avatar} %{actor} *%{event}*'
+    source = configured_card(template)
+    result = deliver(source, ->(*) { raise IOError })
+    assert_equal '🔄 Kota *Issue updated*', result.dig('attachments', 0, 'blocks', 0, 'text', 'text')
+    refute result.key?('_slackmine_avatar_parts')
+    refute_includes JSON.generate(result), 'slackmine_avatar'
+    @actor = nil
+    source = configured_card(template)
+    refute source.key?('_slackmine_avatar_parts')
+    refute_includes JSON.generate(source), 'slackmine_avatar'
+  end
+
+  def test_omitting_avatar_placeholder_keeps_section_and_does_not_load_a_profile
+    source = configured_card('%{icon} %{actor} *%{event}*')
+    result = deliver(source, ->(*) { flunk 'Avatar lookup for a template without avatar' })
+    heading = result.dig('attachments', 0, 'blocks', 0)
+    assert_equal 'section', heading['type']
+    assert_equal '🔄 Kota *Issue updated*', heading.dig('text', 'text')
+    assert_equal source['attachments'], result['attachments']
+    refute heading.key?('elements')
+    refute heading.key?('accessory')
+    refute result.key?('_slackmine_actor_id')
+    refute result.key?('_slackmine_avatar_parts')
+  end
+
+  def test_default_headers_do_not_enable_avatar_lookup
+    Slackmine::Formatter::DEFAULT_MESSAGES.fetch('notification_headers').each_value do |template|
+      refute_includes template, '%{avatar}'
+    end
+    source = Slackmine.stub(:config, @settings) do
+      Slackmine::Formatter.generic_payload(noun: 'Issue', action: 'updated', subject: 'Subject',
+        url: 'https://redmine.example/issues/42', project: @project, actor: @actor)
+    end
+    refute source.key?('_slackmine_avatar_parts')
+    result = deliver(source, ->(*) { flunk 'Avatar lookup for a default header' })
+    assert_equal 'section', result.dig('attachments', 0, 'blocks', 0, 'type')
+    assert_equal '🔄 Kota *Issue updated*', result.dig('attachments', 0, 'blocks', 0, 'text', 'text')
+  end
+
+  def test_project_header_override_controls_inline_avatar_position
+    @settings['projects'] = { 'agentic' => { 'messages' => {
+      'notification_headers' => { 'issue' => '%{avatar} %{actor} %{event}' }
+    } } }
+    source = configured_card('%{icon} %{actor} %{event} %{avatar}')
+    result = deliver(source, ->(*) { { 'user' => { 'profile' => { 'image_48' => @avatar } } } })
+    assert_equal 'context', result.dig('attachments', 0, 'blocks', 0, 'type')
+    assert_equal 'Kota Issue updated', result.dig('attachments', 0, 'blocks', 0, 'elements', 1, 'text')
+    assert_equal @avatar, result.dig('attachments', 0, 'blocks', 0, 'elements', 0, 'image_url')
+  end
+
+  def test_avatar_is_added_at_delivery_and_queued_payload_remains_unchanged
+    calls = 0
+    api = ->(method, body, token, **options) {
+      calls += 1
+      assert_equal 'users.info', method
+      assert_equal({ 'user' => 'U123' }, body)
+      assert_equal 'token', token
+      assert_equal({ form: true, open_timeout: 2, read_timeout: 3 }, options)
+      { 'user' => { 'profile' => { 'image_48' => @avatar } } }
+    }
+    source = card
+    original = Marshal.dump(source)
+    2.times do
+      result = deliver(source, api)
+      heading = result.dig('attachments', 0, 'blocks', 0)
+      assert_equal 'context', heading['type']
+      assert_equal({ 'type' => 'mrkdwn', 'text' => '🔄 Kota' }, heading['elements'][0])
+      assert_equal({ 'type' => 'image', 'image_url' => @avatar, 'alt_text' => 'Kota' }, heading['elements'][1])
+      assert_equal({ 'type' => 'mrkdwn', 'text' => '*Issue updated*' }, heading['elements'][2])
+      assert_equal source.dig('attachments', 0, 'blocks', 1), result.dig('attachments', 0, 'blocks', 1)
+      refute result.key?('_slackmine_actor_id')
+      assert_equal original, Marshal.dump(source)
+    end
+    assert_equal 1, calls
+  end
+
+  def test_custom_heading_formats_are_preserved_with_inline_avatar
+    ['🔄 *Kota* %{avatar} updated', 'Updated by Kota %{avatar}', 'Kota %{avatar} updated', '🔄 %{avatar} Issue updated'].each do |template|
+      source = configured_card(template)
+      text = source.dig('attachments', 0, 'blocks', 0, 'text', 'text')
+      result = deliver(source, ->(*) { { 'user' => { 'profile' => { 'image_48' => @avatar } } } })
+      heading = result.dig('attachments', 0, 'blocks', 0)
+      assert_equal 'context', heading['type']
+      assert_equal text, heading['elements'].reject { |item| item['type'] == 'image' }.map { |item| item['text'] }.join(' ')
+      assert_equal @avatar, heading['elements'].find { |item| item['type'] == 'image' }['image_url']
+    end
+  end
+
+  def test_unmapped_or_deleted_redmine_actor_keeps_heading_without_api_call
+    @settings['users'] = {}
+    source = card
+    result = deliver(source, ->(*) { flunk 'Unmapped user lookup' })
+    assert_equal source['attachments'], result['attachments']
+    @actor = nil
+    result = deliver(source, ->(*) { flunk 'Deleted user lookup' })
+    assert_equal source['attachments'], result['attachments']
+    refute result.key?('_slackmine_actor_id')
+  end
+
+  def test_missing_invalid_or_unavailable_images_do_not_block_delivery
+    [nil, 'http://example.com/avatar.jpg', 'not a URL', 'https://user:password@example.com/avatar.jpg'].each do |image|
+      @cache = AutomaticUserMappingTest::MemoryCache.new
+      source = card
+      result = deliver(source, ->(*) { { 'user' => { 'profile' => { 'image_48' => image } } } })
+      assert_equal source['attachments'], result['attachments']
+    end
+    [Slackmine::SlackApiError.new('users.info', 200, { 'error' => 'missing_scope' }),
+     Timeout::Error.new, IOError.new].each do |error|
+      @cache = AutomaticUserMappingTest::MemoryCache.new
+      source = card
+      result = deliver(source, ->(*) { raise error })
+      assert_equal source['attachments'], result['attachments']
+      refute result.key?('_slackmine_actor_id')
+    end
+  end
+
+  def test_profile_cache_is_scoped_to_bot_token_and_project_user_mapping
+    calls = []
+    api = ->(method, body, token, **_options) {
+      calls << [method, body, token]
+      { 'user' => { 'profile' => { 'image_48' => @avatar } } }
+    }
+    deliver(card, api)
+    @settings['slack']['bot_token'] = 'other-token'
+    deliver(card, api)
+    @settings['projects'] = { 'agentic' => { 'users' => { 'kota' => 'U456' } } }
+    deliver(card, api)
+    assert_equal ['token', 'other-token', 'other-token'], calls.map(&:last)
+    assert_equal %w[U123 U123 U456], calls.map { |call| call[1]['user'] }
+  end
+
+  def test_compact_thread_comment_body_does_not_receive_an_actor_avatar
+    @settings['slack']['comment_notifications_in_threads'] = true
+    source = card.merge('_slackmine_comment_issue_id' => 42,
+                        '_slackmine_thread_comment_payload' => {
+                          'text' => 'Kota · Comment', 'attachments' => [{ 'blocks' => [
+                            Slackmine::Formatter.section_text('Comment body')
+                          ] }]
+                        })
+    Slackmine::CommentThreads.stub(:latest_thread, '1000.000001') do
+      result = deliver(source, ->(*) { flunk 'Compact thread avatar lookup' })
+      assert_equal 'Comment body', result.dig('attachments', 0, 'blocks', 0, 'text', 'text')
+      assert_equal '1000.000001', result['thread_ts']
+      refute result.key?('_slackmine_actor_id')
+    end
+  end
+
+  def test_all_event_builders_queue_actor_id_without_loading_a_slack_profile
+    issue = OpenStruct.new(id: 42, subject: 'Subject', description: '', project: @project,
+                           tracker: OpenStruct.new(name: 'Task'))
+    wiki = OpenStruct.new(page: OpenStruct.new(title: 'Page'), comments: '')
+    empty_changes = []
+    empty_changes.define_singleton_method(:present?) { false }
+    Slackmine.stub(:slack_api, ->(*) { flunk 'Profile lookup inside formatter' }) do
+      Slackmine::Formatter.stub(:change_fields, empty_changes) do
+        cards = [Slackmine::Formatter.issue_payload(issue, actor: @actor, action: 'updated'),
+                 Slackmine::Formatter.journal_payload(issue, actor: @actor, notes: 'Comment'),
+                 Slackmine::Formatter.wiki_payload(wiki, @project, actor: @actor, action: 'updated'),
+                 Slackmine::Formatter.generic_payload(noun: 'News', action: 'created', subject: 'News',
+                   url: 'https://redmine.example/news/1', project: @project, actor: @actor)]
+        assert_equal [7, 7, 7, 7], cards.map { |payload| payload['_slackmine_actor_id'] }
+      end
+    end
+  end
+end
+
 class ProjectConfigurationTest < Minitest::Test
   def project(identifier = 'agentic')
     OpenStruct.new(id: 7, identifier: identifier, name: identifier)

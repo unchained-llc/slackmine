@@ -258,6 +258,8 @@ Wiki ページ、News、作業時間、Version の削除通知は、後から追
 
 ![通知内容](docs/images/features/notification-formatting.webp)
 
+通知の見出しは既定ではアバターを表示しません。`messages.notification_headers` の書式に `%{avatar}` を追加した場合だけ、操作したユーザーの Slack アバターを表示します。`users` の対応表または `slack.auto_map_users_by_name` で Slack ユーザーを特定し、`users:read` 権限で画像を取得します。アバターは Bot Token・ユーザーごとに10分間キャッシュします。対応するユーザーや画像が見つからない場合、または取得に失敗した場合は従来の見出しを表示します。本文だけを表示するスレッド内のコメント通知は対象外です。`messages.notification_headers` の `%{avatar}` で画像の位置を指定できます。既定の並びは「アイコン → 名前・イベント文言」です。画像は Slack の context ブロックで同じ行に表示するため、通常の section より文字が小さくなります。`%{avatar}` を省略した書式では画像を表示せず、通常の section の文字サイズを維持します。
+
 カードにはイベントの見出し、Redmine の対象レコードへのリンク、関連する本文や変更項目を表示します。Issue の作成・更新通知には設定した現在値のメタデータを含めますが、コメントのみの通知と削除通知には含めません。その他のイベントでは、以下の設定で無効にしない限りメタデータを表示します。`slack.attachment_color` はカードの左側の線の色を変更します。
 
 ```yaml
@@ -282,11 +284,12 @@ messages:
       deleted: '#C62828'
 ```
 
-操作通知の見出しは、メタデータの表示設定にかかわらず操作した人の名前を表示します。`messages.notification_headers` の `issue`、`comment`、`wiki`、`document`、`file`、`message`、`news`、`news_comment`、`time_entry`、`version`、`project` で種別ごとに変更できます。共通変数は `%{actor}`（操作した人）、`%{event}`（イベント文言）、`%{icon}`、`%{project}`、`%{subject}`、`%{product_name}`、`%{noun}`、`%{action}` です。`issue` と `comment` では `%{id}` も使えます。プロジェクト別の文言設定にも対応します。従来の `templates.issue_updated_header` は、新しい `notification_headers.issue` が未設定の場合のみ利用します。
+操作通知の見出しは、メタデータの表示設定にかかわらず操作した人の名前を表示します。`messages.notification_headers` の `issue`、`comment`、`wiki`、`document`、`file`、`message`、`news`、`news_comment`、`time_entry`、`version`、`project` で種別ごとに変更できます。共通変数は `%{actor}`（操作した人）、`%{event}`（イベント文言）、`%{icon}`、`%{avatar}`（Slack アバター）、`%{project}`、`%{subject}`、`%{product_name}`、`%{noun}`、`%{action}` です。`issue` と `comment` では `%{id}` も使えます。プロジェクト別の文言設定にも対応します。従来の `templates.issue_updated_header` は、新しい `notification_headers.issue` が未設定の場合のみ利用します。
 
 ```yaml
 messages:
   notification_headers:
+    issue: "%{icon} %{actor} *%{event}*"
     comment: "%{icon} %{actor} *%{event}*"
     news: "%{actor} · %{project} · *%{event}*"
   work_objects:
