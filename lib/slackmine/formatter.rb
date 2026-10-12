@@ -986,7 +986,7 @@ module Slackmine
                 elsif detail.property == 'attr' && %w[parent_id child_id].include?(detail.prop_key)
                   "#{issue_reference(detail.old_value)} → #{issue_reference(detail.value)}"
                 else
-                  "#{detail_old_value(detail)} → #{detail_new_value(issue, detail)}"
+                  "#{detail_old_value(detail, issue: issue)} → #{detail_new_value(issue, detail)}"
                 end
         changes << [label, value]
       end
@@ -1042,6 +1042,7 @@ module Slackmine
     end
 
     def detail_value(issue, detail)
+      return custom_field_detail_text(detail, detail.value, issue: issue) if detail.property == 'cf'
       return text(detail.value.presence || message('values', 'none')) unless detail.property == 'attr'
 
       case detail.prop_key
@@ -1055,7 +1056,20 @@ module Slackmine
       end
     end
 
-    def detail_old_value(detail)
+    def custom_field_detail_text(detail, value, issue: nil)
+      raw = Array(value).reject { |item| item.to_s.empty? }.join(', ')
+      return text(message('values', 'none')) if raw.empty?
+
+      custom_field = CustomField.find_by(id: detail.prop_key)
+      return text(raw) unless custom_field&.format
+
+      view = ApplicationController.helpers
+      formatted = custom_field.format.formatted_value(view, custom_field, value, issue, false)
+      text(view.format_object(formatted, html: false))
+    end
+
+    def detail_old_value(detail, issue: nil)
+      return custom_field_detail_text(detail, detail.old_value, issue: issue) if detail.property == 'cf'
       value = detail.old_value.presence || message('values', 'none')
       return text(value) unless detail.property == 'attr'
 

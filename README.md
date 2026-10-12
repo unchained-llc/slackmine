@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.5.5**.
+Version **1.5.6**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1283,6 +1283,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.5.6** | Add optional Slack avatars to notification headings with the YAML `%{avatar}` placeholder. Avatars remain disabled by default; templates without the placeholder retain normal heading size. |
 | **1.5.5** | Resolve custom field metadata to Redmine display values, including enumeration names, referenced names, and localized boolean labels. |
 | **1.5.4** | Show actors in every operation notification, customize headers with YAML variables, and reuse the configured product name across messages. |
 | **1.5.3** | Render saved Slack quotes and bare Slack URLs as cards in description and comment editor previews. |

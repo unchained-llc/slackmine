@@ -83,6 +83,12 @@ class CustomField
   end
 end
 
+class ApplicationController
+  def self.helpers
+    nil
+  end
+end
+
 class Version
   def self.find_by(id:)
     OpenStruct.new(name: '旧版')
@@ -3503,6 +3509,70 @@ class WorkObjectDetailsTest < Minitest::Test
 end
 
 class NotificationDisplaySettingsTest < Minitest::Test
+  def with_custom_change_format(issue, resolved)
+    view = Object.new
+    view.define_singleton_method(:format_object) do |value, html:|
+      raise 'HTML must be disabled' if html
+      render = ->(item) { item == true ? 'Yes' : item == false ? 'No' : item.to_s }
+      value.is_a?(Array) ? value.map(&render).join(', ') : render.call(value)
+    end
+    format = Object.new
+    custom_field = OpenStruct.new(id: 42, name: '顧客ID', format: format)
+    format.define_singleton_method(:formatted_value) do |helper, field, raw, customized, html|
+      raise 'Wrong display context' unless helper.equal?(view) && field.equal?(custom_field) &&
+                                          customized.equal?(issue) && html == false
+      resolved.fetch(raw)
+    end
+    CustomField.stub(:find_by, custom_field) do
+      ApplicationController.stub(:helpers, view) { yield }
+    end
+  end
+
+  def test_custom_field_change_values_resolve_add_update_remove_multiple_and_boolean
+    issue = OpenStruct.new
+    cases = [
+      [nil, '19', 'None → TELESIGHT[019]'],
+      ['18', '19', 'Previous &amp; customer → TELESIGHT[019]'],
+      ['19', '', 'TELESIGHT[019] → None'],
+      [['18', '19'], ['19'], 'Previous &amp; customer, TELESIGHT[019] → TELESIGHT[019]'],
+      ['0', '1', 'No → Yes'],
+      ['', '0', 'None → No'],
+      ['7', '8', '7 → 8']
+    ]
+    resolved = { '18' => 'Previous & customer', '19' => 'TELESIGHT[019]',
+                 ['18', '19'] => ['Previous & customer', 'TELESIGHT[019]'],
+                 ['19'] => ['TELESIGHT[019]'], '0' => false, '1' => true, '7' => 7, '8' => 8 }
+    with_custom_change_format(issue, resolved) do
+      cases.each do |old_value, value, expected|
+        detail = OpenStruct.new(property: 'cf', prop_key: '42', old_value: old_value, value: value)
+        assert_equal [['顧客ID', expected]], Slackmine::Formatter.change_fields(issue, [detail])
+      end
+    end
+  end
+
+  def test_custom_field_changes_use_journal_values_in_issue_and_comment_notifications
+    issue = OpenStruct.new(id: 7, subject: 'Subject', description: '',
+                           project: OpenStruct.new(name: 'Agentic'), tracker: OpenStruct.new(name: 'Task'))
+    # The issue may have changed again since this journal was recorded.
+    issue.visible_custom_field_values = [OpenStruct.new(custom_field: nil, value: '20')]
+    detail = OpenStruct.new(property: 'cf', prop_key: '42', old_value: nil, value: '19')
+    with_custom_change_format(issue, { '19' => 'TELESIGHT[019]' }) do
+      payloads = [Slackmine::Formatter.issue_payload(issue, actor: nil, action: 'updated', details: [detail]),
+                  Slackmine::Formatter.journal_payload(issue, actor: nil, notes: 'Comment', details: [detail])]
+      payloads.each do |payload|
+        fields = payload.dig('attachments', 0, 'blocks').flat_map { |block| block.fetch('fields', []) }
+        assert_includes fields.map { |field| field['text'] }, "*顧客ID*\nNone → TELESIGHT[019]"
+      end
+    end
+  end
+
+  def test_deleted_custom_fields_keep_raw_change_values
+    detail = OpenStruct.new(property: 'cf', prop_key: '42', old_value: '18', value: '19')
+    CustomField.stub(:find_by, nil) do
+      assert_equal [['42', '18 → 19']], Slackmine::Formatter.change_fields(OpenStruct.new, [detail])
+    end
+  end
+
   def test_custom_metadata_resolves_records_and_booleans_without_html
     view = Object.new
     view.define_singleton_method(:format_object) do |value, html:|

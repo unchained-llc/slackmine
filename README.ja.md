@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **1.5.5**。
+バージョン **1.5.6**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -1249,6 +1249,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **1.5.6** | YAMLの `%{avatar}` で通知見出しにSlackアバターを任意表示できます。既定では表示せず、変数を省略した書式は通常の文字サイズを維持します。 |
 | **1.5.5** | カスタムフィールドのメタデータをRedmineの表示値に変換し、選択肢名・参照先の名称・言語設定に応じた真偽値を表示します。 |
 | **1.5.4** | 全操作通知に操作した人を表示し、YAML変数による見出し設定と製品名の共通展開に対応します。 |
 | **1.5.3** | 説明・コメントの編集プレビューで、保存済みSlack引用とURLだけの入力をカード表示します。 |
