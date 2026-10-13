@@ -15,7 +15,15 @@ class SlackmineDueDigestJob < ApplicationJob
     filters = {} unless filters.is_a?(Hash)
     groups = due_issues_for(user, today, filters)
     groups.each do |(token, slack_user_id), issues|
-      dm = Slackmine.slack_api('conversations.open', { 'users' => slack_user_id }, token)
+      begin
+        dm = Slackmine.slack_api('conversations.open', { 'users' => slack_user_id }, token)
+      rescue Slackmine::SlackApiError => error
+        raise unless error.code == 'cannot_dm_bot'
+
+        Rails.logger.warn("Slackmine: due reminder skipped for Redmine user ##{user.id} " \
+                          "(Slack user #{slack_user_id}: cannot_dm_bot)")
+        next
+      end
       channel = dm.dig('channel', 'id')
       raise "Slack conversations.open returned no DM channel for Redmine user ##{user.id}" unless channel.to_s.match?(/\AD[A-Z0-9]+\z/)
 

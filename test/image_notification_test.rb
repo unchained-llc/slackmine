@@ -4397,6 +4397,55 @@ class DueReminderTest < Minitest::Test
     end
   end
 
+  def test_bot_recipient_is_skipped_and_next_group_is_delivered
+    user = OpenStruct.new(id: 7, active?: true)
+    job = SlackmineDueDigestJob.new
+    issue = OpenStruct.new(id: 1, due_date: Date.current, project: OpenStruct.new(name: 'Example'))
+    groups = { ['bot-token', 'UBOT'] => [issue], ['human-token', 'UHUMAN'] => [issue] }
+    warnings = []
+    logger = Object.new
+    logger.define_singleton_method(:warn) { |message| warnings << message }
+    opened = []
+    posts = []
+    api = lambda do |_method, body, _token|
+      opened << body['users']
+      raise Slackmine::SlackApiError.new('conversations.open', '200', { 'error' => 'cannot_dm_bot' }) if body['users'] == 'UBOT'
+
+      { 'channel' => { 'id' => 'D123' } }
+    end
+    User.stub(:find_by, user) do
+      Rails.stub(:logger, logger) do
+        job.stub(:due_issues_for, groups) do
+          Slackmine.stub(:slack_api, api) do
+            Slackmine::Formatter.stub(:due_digest_payload, { 'text' => 'Digest' }) do
+              Slackmine.stub(:post_message, ->(*args) { posts << args }) do
+                job.perform(7, Date.current.iso8601)
+              end
+            end
+          end
+        end
+      end
+    end
+    assert_equal %w[UBOT UHUMAN], opened
+    assert_equal [[{ 'text' => 'Digest' }, 'D123', 'human-token']], posts
+    assert_equal 1, warnings.size
+    assert_includes warnings.first, 'Redmine user #7'
+    assert_includes warnings.first, 'UBOT: cannot_dm_bot'
+  end
+
+  def test_other_slack_api_errors_still_fail
+    user = OpenStruct.new(id: 7, active?: true)
+    job = SlackmineDueDigestJob.new
+    error = Slackmine::SlackApiError.new('conversations.open', '200', { 'error' => 'missing_scope' })
+    User.stub(:find_by, user) do
+      job.stub(:due_issues_for, { ['token', 'U123'] => [] }) do
+        Slackmine.stub(:slack_api, ->(*) { raise error }) do
+          assert_same error, assert_raises(Slackmine::SlackApiError) { job.perform(7, Date.current.iso8601) }
+        end
+      end
+    end
+  end
+
   def test_job_sends_eleven_issues_in_one_dm_on_every_run
     assignee = User.new
     assignee.define_singleton_method(:id) { 7 }

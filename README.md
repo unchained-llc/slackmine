@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.5.6**.
+Version **1.5.7**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1047,6 +1047,8 @@ bundle exec rake slackmine:due_reminders RAILS_ENV=production
 
 Schedule the task once a day with the scheduler used by your Redmine installation. Each execution sends another digest, even on the same day.
 
+If Slack rejects a recipient with `cannot_dm_bot`, the digest skips that destination and logs the Redmine and Slack user IDs. Other destinations continue to receive reminders. Other API errors still fail the job.
+
 For cron, put the command in a small script that changes to the Redmine directory first:
 
 ```sh
@@ -1283,6 +1285,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.5.7** | Skip bot destinations rejected with `cannot_dm_bot` in due-date reminder DMs, log the recipient IDs, and continue delivery to other destinations. |
 | **1.5.6** | Add optional Slack avatars to notification headings with the YAML `%{avatar}` placeholder. Avatars remain disabled by default; templates without the placeholder retain normal heading size. |
 | **1.5.5** | Resolve custom field metadata to Redmine display values, including enumeration names, referenced names, and localized boolean labels. |
 | **1.5.4** | Show actors in every operation notification, customize headers with YAML variables, and reuse the configured product name across messages. |
