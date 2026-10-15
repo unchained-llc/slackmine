@@ -56,7 +56,7 @@ ja:
     slack_default_channel_id: "個別指定・親プロジェクトの継承・名前の自動照合で通知先が決まらない場合の共通チャンネルです。プロジェクト内の指定はそのプロジェクトの明示指定です。"
     slack_auto_map_users_by_name: "Redmineのログイン名をSlackのユーザー名・表示名と照合し、一意に一致した場合にメンションします。明示設定が優先されます。"
     slack_auto_map_users_by_email: "登録メールアドレスの一意な一致でWork Objectやスレッド返信の権限を確認します。メンション先の照合には使いません。"
-    slack_auto_map_channels_by_name: "プロジェクト名をBot参加チャンネル名と照合します。空白はハイフンに変換し、大文字・小文字を区別しません。明示指定が優先されます。"
+    slack_auto_map_channels_by_name: "プロジェクト識別子をBot参加チャンネル名と照合します。空白はハイフンに変換し、大文字・小文字を区別しません。明示指定が優先されます。"
     slack_work_object_previews: "チケットの作成・更新・コメント通知にTask Work Objectプレビューを追加します。Slackアプリ側の設定も必要です。"
     slack_work_object_actions: "Work Objectカードでチケット編集などの操作を有効にします。実行時にユーザー対応とRedmineの権限を再確認します。"
     slack_work_object_start_status_id: "「作業開始」で変更するチケットステータスIDです。名前ではなく実際のIDを指定します。"

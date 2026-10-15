@@ -584,7 +584,7 @@ projects:
 
 ### Match projects to channels by name
 
-Enable `slack.auto_map_channels_by_name: true` to match Redmine project **display names** to Slack channel names. Names are trimmed and compared case-insensitively; whitespace becomes a hyphen (`Customer Support` → `customer-support`). Project identifiers are not used for matching. No fuzzy matching, channel creation, or automatic joining is performed.
+Enable `slack.auto_map_channels_by_name: true` to match Redmine project **identifiers** to Slack channel names (identifier `customer-support` → `#customer-support`). Identifiers are trimmed and compared case-insensitively; whitespace becomes a hyphen. Project display names are not used for matching. No fuzzy matching, channel creation, or automatic joining is performed.
 
 ```yaml
 slack:
@@ -1285,6 +1285,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.5.8** | Match Slack channel names to Redmine project identifiers, including ancestor projects. |
 | **1.5.7** | Skip bot destinations rejected with `cannot_dm_bot` in due-date reminder DMs, log the recipient IDs, and continue delivery to other destinations. |
 | **1.5.6** | Add optional Slack avatars to notification headings with the YAML `%{avatar}` placeholder. Avatars remain disabled by default; templates without the placeholder retain normal heading size. |
 | **1.5.5** | Resolve custom field metadata to Redmine display values, including enumeration names, referenced names, and localized boolean labels. |

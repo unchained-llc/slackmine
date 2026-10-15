@@ -10,7 +10,7 @@ Redmine::Plugin.register :slackmine do
   author 'UNCHAINED'
   url 'https://github.com/unchained-llc/slackmine'
   description 'Integrate Redmine 7 with Slack: notifications, Work Objects, issue actions, search, and thread replies.'
-  version '1.5.7'
+  version '1.5.8'
   requires_redmine version_or_higher: '7.0.0'
 
   menu :admin_menu, :slackmine_admin,

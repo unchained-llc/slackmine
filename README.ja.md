@@ -83,7 +83,7 @@ Work Objectのプレビュー・操作、スラッシュコマンド、スレッ
 | [Issueの画像表示](#issue-の画像表示) | [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) | — | Redmineに添付された対応画像 |
 | [担当者のメンション](#担当者のメンション) | 明示的な対応付けなら追加不要。名前の自動照合は [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | — | `users` または `slack.auto_map_users_by_name: true` |
 | [メールでのユーザー対応付け](#メールアドレスで閲覧ユーザーを自動対応付けする) | [`users:read`](https://docs.slack.dev/reference/scopes/users.read/)、[`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) | — | `slack.auto_map_users_by_email: true`、`slack.events.team_id` |
-| [チャンネル名の自動対応付け](#プロジェクト名とチャンネル名の自動マッチング) | [`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/) / [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/) | Botを対象チャンネルへ招待 | `slack.auto_map_channels_by_name: true` |
+| [チャンネル名の自動対応付け](#プロジェクト識別子とチャンネル名の自動マッチング) | [`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/) / [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/) | Botを対象チャンネルへ招待 | `slack.auto_map_channels_by_name: true` |
 | [Work Object通知プレビュー](#チケットの-work-object-previews) | [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) | Work Object PreviewsをON、Taskを選択 | `slack.work_object_previews: true` |
 | [Work Objectの詳細表示](#チケットの-work-object-previews) | 詳細表示自体の追加スコープなし | Event Subscriptionsで [`entity_details_requested`](https://docs.slack.dev/reference/events/entity_details_requested/) を購読 | `slack.work_object_previews: true`、`slack.events`、ユーザー対応付け |
 | [Work ObjectのURL展開・再読み込み](#チケットの-work-object-previews) | [`links:read`](https://docs.slack.dev/reference/scopes/links.read/)、[`links:write`](https://docs.slack.dev/reference/scopes/links.write/) | [`link_shared`](https://docs.slack.dev/reference/events/link_shared/) を購読、App unfurl domainsにRedmineのホストを登録 | `slack.work_object_previews: true`、`slack.events`、ユーザー対応付け |
@@ -561,9 +561,9 @@ projects:
   # チャンネルを個別指定しない子は、この親のチャンネルを使います。
 ```
 
-### プロジェクト名とチャンネル名の自動マッチング
+### プロジェクト識別子とチャンネル名の自動マッチング
 
-`slack.auto_map_channels_by_name: true` で、Redmineプロジェクトの**表示名**とSlackチャンネル名を自動照合できます。前後の空白と大文字・小文字の違いを無視し、空白はハイフンに変換します（`Customer Support` → `customer-support`）。プロジェクト識別子は照合に使いません。曖昧な部分一致、チャンネル作成、自動参加は行いません。
+`slack.auto_map_channels_by_name: true` で、Redmineプロジェクトの**識別子**とSlackチャンネル名を自動照合できます（識別子 `customer-support` → `#customer-support`）。前後の空白と大文字・小文字の違いを無視し、空白はハイフンに変換します。表示名は照合に使いません。曖昧な部分一致、チャンネル作成、自動参加は行いません。
 
 ```yaml
 slack:
@@ -1251,6 +1251,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **1.5.8** | チャンネル名の自動マッチをプロジェクト識別子との照合に変更。親プロジェクトの照合にも適用します。 |
 | **1.5.7** | 期日リマインダーDMで `cannot_dm_bot` が返ったbot宛先をスキップし、宛先IDをログに記録してほかの宛先への配信を継続します。 |
 | **1.5.6** | YAMLの `%{avatar}` で通知見出しにSlackアバターを任意表示できます。既定では表示せず、変数を省略した書式は通常の文字サイズを維持します。 |
 | **1.5.5** | カスタムフィールドのメタデータをRedmineの表示値に変換し、選択肢名・参照先の名称・言語設定に応じた真偽値を表示します。 |

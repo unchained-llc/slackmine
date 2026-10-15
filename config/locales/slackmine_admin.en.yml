@@ -56,7 +56,7 @@ en:
     slack_default_channel_id: "Global fallback channel when explicit routing, parent inheritance and name matching do not resolve a destination. A project override is an explicit destination for that project."
     slack_auto_map_users_by_name: "Mention a unique Slack username or display-name match for the Redmine login. Explicit mappings take precedence."
     slack_auto_map_users_by_email: "Authorize Work Objects and thread replies by a unique registered email match. Does not resolve mention targets."
-    slack_auto_map_channels_by_name: "Match project names to Bot-member channel names, case-insensitively with spaces replaced by hyphens. Explicit destinations take precedence."
+    slack_auto_map_channels_by_name: "Match project identifiers to Bot-member channel names, case-insensitively with spaces replaced by hyphens. Explicit destinations take precedence."
     slack_work_object_previews: "Add Task Work Object previews to issue creation, update and comment notifications. Requires Slack app preview configuration."
     slack_work_object_actions: "Enable issue actions on Work Object cards. User mappings and Redmine permissions are checked again on submission."
     slack_work_object_start_status_id: "Issue status ID used by Start work. Specify the actual ID, not the status name."

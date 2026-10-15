@@ -4777,11 +4777,11 @@ class AutomaticChannelMatchingTest < Minitest::Test
     end
   end
 
-  def channel(id = 'CMATCH', name = 'customer-support')
+  def channel(id = 'CMATCH', name = 'support')
     { 'id' => id, 'name' => name }
   end
 
-  def test_display_name_matches_case_and_spaces_without_identifier_guessing
+  def test_identifier_matches_case_and_spaces_independently_of_display_name
     api = ->(method, request, token, **options) do
       assert_equal 'users.conversations', method
       assert_equal 'public_channel,private_channel', request['types']
@@ -4791,10 +4791,16 @@ class AutomaticChannelMatchingTest < Minitest::Test
       { 'channels' => [channel] }
     end
     assert_equal 'CMATCH', resolve(api)
-    @project.name = ' CUSTOMER   SUPPORT '
+    @project.identifier = ' SUPPORT '
     assert_equal 'CMATCH', resolve(->(*) { flunk 'Directory should be cached' })
-    @project.name = 'Different name'
+    @project.name = 'Renamed display name'
+    assert_equal 'CMATCH', resolve(->(*) { flunk 'Directory should be cached' })
+    @project.identifier = 'different-identifier'
     assert_equal 'CDEFAULT', resolve(->(*) { flunk 'Directory should be cached' })
+  end
+
+  def test_display_name_alone_does_not_match
+    assert_equal 'CDEFAULT', resolve(->(*) { { 'channels' => [channel('CNAME', 'customer-support')] } })
   end
 
   def test_unconfigured_child_inherits_nearest_explicit_ancestor_channel
@@ -4826,40 +4832,40 @@ class AutomaticChannelMatchingTest < Minitest::Test
     end
   end
 
-  def test_unconfigured_ancestors_keep_child_name_match_and_global_fallback
+  def test_unconfigured_ancestors_keep_child_identifier_match_and_global_fallback
     @project.parent = OpenStruct.new(identifier: 'parent', name: 'Different name', parent: nil)
     assert_equal 'CMATCH', resolve(->(*) { { 'channels' => [channel] } })
     MATCHING.instance_variable_set(:@cache, {})
     assert_equal 'CDEFAULT', resolve(->(*) { { 'channels' => [] } })
   end
 
-  def test_child_without_matching_channel_uses_existing_parent_named_channel
+  def test_child_without_matching_channel_uses_existing_parent_identifier_channel
     @project.parent = OpenStruct.new(identifier: 'parent', name: 'Parent Project', parent: nil)
     calls = 0
-    api = ->(*) { calls += 1; { 'channels' => [channel('CPARENT', 'parent-project')] } }
+    api = ->(*) { calls += 1; { 'channels' => [channel('CPARENT', 'parent')] } }
     assert_equal 'CPARENT', resolve(api)
     assert_equal 1, calls
     @project.parent.parent = OpenStruct.new(identifier: 'root', name: 'Root Project', parent: nil)
     MATCHING.instance_variable_set(:@cache, {})
-    assert_equal 'CROOT', resolve(->(*) { { 'channels' => [channel('CROOT', 'root-project')] } })
+    assert_equal 'CROOT', resolve(->(*) { { 'channels' => [channel('CROOT', 'root')] } })
   end
 
-  def test_child_name_match_wins_over_parent_name_match
+  def test_child_identifier_match_wins_over_parent_identifier_match
     @project.parent = OpenStruct.new(identifier: 'parent', name: 'Parent Project', parent: nil)
-    assert_equal 'CMATCH', resolve(->(*) { { 'channels' => [channel, channel('CPARENT', 'parent-project')] } })
+    assert_equal 'CMATCH', resolve(->(*) { { 'channels' => [channel, channel('CPARENT', 'parent')] } })
   end
 
-  def test_child_name_match_wins_over_explicit_parent_and_nearest_parent_match_wins_over_root
+  def test_child_identifier_match_wins_over_explicit_parent_and_nearest_parent_match_wins_over_root
     root = OpenStruct.new(identifier: 'root', name: 'Root Project', parent: nil)
     @project.parent = OpenStruct.new(identifier: 'parent', name: 'Parent Project', parent: root)
     @settings['projects'] = { 'parent' => { 'channel_id' => 'CPARENT' }, 'root' => { 'channel_id' => 'CROOT' } }
     assert_equal 'CMATCH', resolve(->(*) { { 'channels' => [channel] } })
     MATCHING.instance_variable_set(:@cache, {})
     @settings['projects'].delete('parent')
-    assert_equal 'CPARENT', resolve(->(*) { { 'channels' => [channel('CPARENT', 'parent-project')] } })
+    assert_equal 'CPARENT', resolve(->(*) { { 'channels' => [channel('CPARENT', 'parent')] } })
   end
 
-  def test_child_can_disable_ancestor_name_matching
+  def test_child_can_disable_ancestor_identifier_matching
     @project.parent = OpenStruct.new(identifier: 'parent', name: 'Parent Project', parent: nil)
     @settings['projects'] = { 'support' => { 'slack' => { 'auto_map_channels_by_name' => false } } }
     assert_equal 'CDEFAULT', resolve(->(*) { flunk 'Disabled child must not look up ancestor channels' })
@@ -4915,7 +4921,7 @@ class AutomaticChannelMatchingTest < Minitest::Test
 
   def test_expired_memory_cache_is_refreshed
     key = Digest::SHA256.hexdigest('channel-test-token')
-    MATCHING.instance_variable_set(:@cache, { key => { expires_at: 0, channels: { 'customer-support' => ['COLD'] } } })
+    MATCHING.instance_variable_set(:@cache, { key => { expires_at: 0, channels: { 'support' => ['COLD'] } } })
     assert_equal 'CMATCH', resolve(->(*) { { 'channels' => [channel] } })
   end
 end

@@ -44,7 +44,7 @@ slack:
   # user with a matching registered email. Explicit users mappings take priority.
   # Requires users:read + users:read.email and an app reinstall.
   auto_map_users_by_email: false
-  # Match project display names to bot-member channel names (case-insensitive;
+  # Match project identifiers to bot-member channel names (case-insensitive;
   # spaces become hyphens). Explicit project channel IDs take priority.
   # No unique match/API failure falls back to default_channel_id.
   # Requires channels:read (public) / groups:read (private) and app reinstall.

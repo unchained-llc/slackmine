@@ -14,7 +14,7 @@ module Slackmine
     def channel_for(project)
       return unless Slackmine.effective_config(project).dig('slack', 'auto_map_channels_by_name') == true
 
-      name = normalized_name(project.name)
+      name = normalized_name(project.identifier)
       token = Slackmine.bot_token(project)
       return if name.empty? || token.empty?
 
