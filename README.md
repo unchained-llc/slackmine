@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.5.7**.
+Version **1.5.9**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -292,7 +292,7 @@ notifications. Due-reminder email remains outside mail suppression.
 
 ![Notification content](docs/images/features/notification-formatting.webp)
 
-Event headings omit avatars by default. Add `%{avatar}` explicitly to a `messages.notification_headers` template to show the actor's Slack avatar. The plugin resolves the Slack user through the `users` mapping or `slack.auto_map_users_by_name` and retrieves the image with `users:read`. Avatars are cached for ten minutes per Bot Token and Slack user. Unmapped users, missing images, and lookup failures retain the existing heading. Compact comment notifications inside threads are excluded. Place `%{avatar}` in `messages.notification_headers` to choose its inline position. The default order is icon, then actor and event text. Inline images use a Slack context block, whose text is smaller than a normal section. Templates without `%{avatar}` omit the image and retain the normal section text size.
+Event headings omit avatars by default. Add `%{avatar}` explicitly to a `messages.notification_headers` template to show the actor's Slack avatar. The plugin resolves the Slack user through the `users` mapping, `slack.auto_map_users_by_name`, or `slack.auto_map_users_by_email` and retrieves the image with `users:read`. Avatars are cached for ten minutes per Bot Token and Slack user. Unmapped users, missing images, and lookup failures retain the existing heading. Compact comment notifications inside threads are excluded. Place `%{avatar}` in `messages.notification_headers` to choose its inline position. The default order is icon, then actor and event text. Inline images use a Slack context block, whose text is smaller than a normal section. Templates without `%{avatar}` omit the image and retain the normal section text size.
 
 The card contains an event heading, a link to the Redmine record, and relevant text or changed fields. Issue creation and updates include the configured current-value metadata; comment-only and deletion notifications do not. Other event types show their metadata unless disabled below. `slack.attachment_color` changes the card's left border:
 
@@ -411,7 +411,7 @@ You can also disable this globally and enable it for individual projects. Restar
 
 In the Slack app settings, enable **Work Object Previews**, select **Task**, and save. Check workspace preview restrictions too. Notifications use the existing [`chat.postMessage`](https://docs.slack.dev/reference/methods/chat.postMessage/) call; notification previews alone do not require new event subscriptions or link-unfurl scopes. See [Slack's notifications implementation](https://docs.slack.dev/messaging/work-objects-implementation/#notifications-implementation).
 
-The header contains the subject, Issue number, and tracker. Standard fields include status, priority, assignee, author, and due date only when enabled by `slack.metadata.issue`. Project, tracker, category, updater, and target version use custom fields with the same visibility settings and `messages.fields` labels. When a Work Object is present, the notification omits its duplicate subject link and current metadata fields. Comments, descriptions, before/after changes, and fields absent from the Work Object remain in the event card. Assignees and authors use display names without introducing mentions or additional user-directory requests.
+The header contains the subject, Issue number, and tracker. Standard fields include status, priority, assignee, author, and due date only when enabled by `slack.metadata.issue`. Project, tracker, category, updater, and target version use custom fields with the same visibility settings and `messages.fields` labels. When a Work Object is present, the notification omits its duplicate subject link and current metadata fields. Comments, descriptions, before/after changes, and fields absent from the Work Object remain in the event card. Assignees and authors use Slack user identities resolved from explicit mappings or enabled name/email matching, falling back to Redmine display names. Resolving these identities does not introduce mentions.
 
 The SHA-256 digest of the Issue URL is used as `external_ref.id` to satisfy Slack's ID character restrictions, keeping creation, updates, and comments associated with the same object while distinguishing identical Issue numbers on different Redmine instances. Changing the Redmine hostname changes this identity. The link's `url` remains the original Issue URL.
 
@@ -563,9 +563,9 @@ slack:
   auto_map_users_by_email: true
 ```
 
-Add both [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) and [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) Bot Token scopes, then reinstall the app. The plugin fetches fresh identity data with [`users.info`](https://docs.slack.dev/reference/methods/users.info/) for each authorization. Missing email, multiple active Redmine matches, inactive users, bots, deleted Slack users, foreign-workspace identities, and API failures deny automatic access. The configured `slack.events.team_id` must match the Slack identity's workspace. Email identity data is not cached or saved in a new table, Redis, or a file, and is not included in diagnostic logs. Override the switch under `projects.<identifier>.slack.auto_map_users_by_email`.
+Add both [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) and [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) Bot Token scopes, then reinstall the app. The plugin fetches fresh identity data with [`users.info`](https://docs.slack.dev/reference/methods/users.info/) for each authorization. Missing email, multiple active Redmine matches, inactive users, bots, deleted Slack users, foreign-workspace identities, and API failures deny automatic access. The configured `slack.events.team_id` must match the Slack identity's workspace. Email identity evidence used for authorization is not cached or saved in a new table, Redis, or a file, and is not included in diagnostic logs. Override the switch under `projects.<identifier>.slack.auto_map_users_by_email`.
 
-This is distinct from `auto_map_users_by_name`, which only resolves outgoing mentions and due-reminder recipients. Email matching is for incoming viewer/comment authorization and does not automatically enable outgoing mentions or DMs.
+This is distinct from `auto_map_users_by_name`, which resolves outgoing mentions and due-reminder recipients. Email matching also resolves Work Object assignee/creator identities, notification avatars, and the admin user overview from the primary Redmine email address. Outgoing/display matching uses a paginated `users.list` directory cached for ten minutes per Bot Token and configured workspace, requiring both `users:read` and `users:read.email`. The cache contains only hashed email keys and Slack IDs, not raw emails or profiles. Explicit mappings take priority. When both `auto_map_users_by_name` and `auto_map_users_by_email` are enabled, the switch written first in YAML is tried first; an absent or ambiguous match falls back to the other method. To override the order for a project, write both switches in the desired order under that project. The admin user overview shows the method that actually matched (explicit login/email mapping, name, or email). Missing or ambiguous emails, non-human accounts, workspace mismatches, and API failures fall back to the Redmine name. Failed listings pause requests for the same Bot Token for 60 seconds and log only the exception class and a sanitized Slack error code. Listings are limited to ten pages of 200 members; incomplete listings are discarded. This display cache never authorizes access or suppresses email; incoming authorization continues to fetch fresh `users.info`. This does not automatically enable outgoing mentions or DMs.
 
 ### Inherit a parent project channel
 
@@ -1285,6 +1285,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.5.9** | Fix email-matched Work Object identities and notification avatars. Cache outgoing email matching through paginated user listings to avoid per-user API requests, show the winning match method in the admin overview, and prioritize automatic name/email matching by YAML declaration order. |
 | **1.5.8** | Match Slack channel names to Redmine project identifiers, including ancestor projects. |
 | **1.5.7** | Skip bot destinations rejected with `cannot_dm_bot` in due-date reminder DMs, log the recipient IDs, and continue delivery to other destinations. |
 | **1.5.6** | Add optional Slack avatars to notification headings with the YAML `%{avatar}` placeholder. Avatars remain disabled by default; templates without the placeholder retain normal heading size. |

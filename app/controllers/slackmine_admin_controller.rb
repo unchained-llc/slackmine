@@ -33,7 +33,9 @@ class SlackmineAdminController < ApplicationController
       scope = @scope_project ? @scope_project.users : User.active
       candidates = scope.order(:login, :id).to_a
       Slackmine.with_project(@scope_project) do
-        @mentions = candidates.to_h { |user| [user.id, Slackmine.slack_user_id_for(user)] }
+        matches = candidates.to_h { |user| [user.id, Slackmine.slack_user_match_for(user)] }
+        @mentions = matches.transform_values { |match| match && match[:id] }
+        @match_methods = matches.transform_values { |match| match && match[:method] }
         candidates.select! { |user| !@mentions[user.id].to_s.empty? } if @mapping_filter == 'mapped'
         candidates.reject! { |user| !@mentions[user.id].to_s.empty? } if @mapping_filter == 'unmapped'
         @user_mapping = Slackmine::AdminOverview.redact(Slackmine.user_mapping)
@@ -42,6 +44,7 @@ class SlackmineAdminController < ApplicationController
       @pages = Paginator.new(@count, 50, params[:page])
       @users = candidates.slice(@pages.offset, @pages.per_page) || []
       @mentions = @users.to_h { |user| [user.id, @mentions[user.id]] }
+      @match_methods = @users.to_h { |user| [user.id, @match_methods[user.id]] }
     end
   end
   def test_notification

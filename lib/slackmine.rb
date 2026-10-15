@@ -229,14 +229,105 @@ module Slackmine
     mapping.is_a?(Hash) ? mapping : {}
   end
 
-  def slack_user_id_for(user)
+  def slack_user_id_for(user, by_email: true)
+    match = slack_user_match_for(user, by_email: by_email)
+    match[:id] if match
+  end
+
+  def slack_user_match_for(user, by_email: true)
     return unless user.is_a?(User)
 
     mapping = user_mapping
     id = mapping[user.login.to_s] || mapping[user.mail.to_s]
-    id = slack_user_id_for_name(user.login) if id == false || id.to_s.strip.empty?
-    id = id.to_s.strip
-    id if id.match?(/\A[UW][A-Z0-9]+\z/)
+    method = mapping[user.login.to_s] ? :explicit_login : :explicit_email
+    unless id == false || id.to_s.strip.empty?
+      id = id.to_s.strip
+      return { id: id, method: method } if id.match?(/\A[UW][A-Z0-9]+\z/)
+      return nil
+    end
+
+    automatic_user_matching_order.each do |candidate|
+      next if candidate == :email && !by_email
+
+      id = candidate == :name ? slack_user_id_for_name(user.login) : slack_user_id_for_email(user.mail)
+      id = id.to_s.strip
+      return { id: id, method: candidate } if id.match?(/\A[UW][A-Z0-9]+\z/)
+    end
+    nil
+  end
+
+  def automatic_user_matching_order
+    keys = %w[auto_map_users_by_name auto_map_users_by_email]
+    settings = effective_config['slack']
+    configured = settings.is_a?(Hash) ? settings.keys & keys : []
+    # Hash#merge keeps the original key positions. When a project specifies
+    # both switches, use their order in that project's YAML instead.
+    project_settings = project_config(Thread.current[:slackmine_project])['slack']
+    project_keys = project_settings.is_a?(Hash) ? project_settings.keys & keys : []
+    configured = project_keys if project_keys.length == 2
+    (configured + keys).uniq.map { |key| key == 'auto_map_users_by_name' ? :name : :email }
+  end
+
+  # Display/outgoing identity only: authorization still fetches fresh users.info.
+  # Cache hashed email keys and Slack IDs, never raw emails or Slack profiles.
+  def slack_user_id_for_email(email)
+    return unless effective_config.dig('slack', 'auto_map_users_by_email') == true
+
+    email = email.to_s.strip.downcase
+    token = bot_token
+    return if email.empty? || token.to_s.empty?
+
+    token_key = Digest::SHA256.hexdigest(token)
+    failure_key = "slackmine/outgoing-email-failure/#{token_key}"
+    return if Rails.cache&.read(failure_key)
+
+    team_id = effective_config.dig('slack', 'events', 'team_id').to_s
+    cache_key = "slackmine/email-users/#{token_key}/#{Digest::SHA256.hexdigest(team_id)}"
+    directory = if Rails.cache
+                  Rails.cache.fetch(cache_key, expires_in: 600) { fetch_slack_email_directory(token, team_id) }
+                else
+                  fetch_slack_email_directory(token, team_id)
+                end
+    ids = directory[Digest::SHA256.hexdigest(email)]
+    ids.first if ids && ids.length == 1
+  rescue StandardError => e
+    Rails.cache&.write(failure_key, true, expires_in: 60) if failure_key
+    code = if e.is_a?(SlackApiError)
+             e.code.to_s.match?(/\A[a-z0-9_]+\z/) ? e.code : 'unknown_error'
+           end
+    Rails.logger&.warn("Slackmine: outgoing email user matching failed: #{e.class}#{code ? " code=#{code}" : ''} (retry in 60s)")
+    nil
+  end
+
+  def fetch_slack_email_directory(token, team_id)
+    directory = Hash.new { |hash, email_key| hash[email_key] = [] }
+    cursor = nil
+    seen = {}
+    10.times do
+      params = { 'limit' => 200 }
+      params['cursor'] = cursor if cursor
+      response = slack_api('users.list', params, token, form: true, open_timeout: 2, read_timeout: 3)
+      raise 'Invalid Slack users.list members' unless response['members'].is_a?(Array)
+
+      response['members'].each do |member|
+        next unless member.is_a?(Hash) && member['id'].to_s.match?(/\A[UW][A-Z0-9]+\z/)
+        next if member['deleted'] || member['is_bot'] || member['is_app_user'] || member['is_stranger']
+        next unless team_id.empty? || (member['team_id'] || member['team']) == team_id
+        next unless member['profile'].is_a?(Hash)
+
+        email = member['profile']['email'].to_s.strip.downcase
+        next if email.empty?
+
+        ids = directory[Digest::SHA256.hexdigest(email)]
+        ids << member['id'] unless ids.include?(member['id'])
+      end
+      cursor = response.dig('response_metadata', 'next_cursor').to_s.strip
+      return directory.each_with_object({}) { |(key, ids), result| result[key] = ids } if cursor.empty?
+      raise 'Repeated Slack users.list cursor' if seen[cursor]
+
+      seen[cursor] = true
+    end
+    raise 'Slack users.list exceeded 10 pages'
   end
 
   def due_reminder_settings(project = nil)

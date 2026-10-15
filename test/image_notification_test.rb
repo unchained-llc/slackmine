@@ -188,6 +188,14 @@ class AutomaticUserMappingTest < Minitest::Test
     def fetch(key, expires_in:)
       @entries[key] ||= yield
     end
+
+    def read(key)
+      @entries[key]
+    end
+
+    def write(key, value, expires_in:)
+      @entries[key] = value
+    end
   end
 
   def test_disabled_mapping_does_not_fetch_users
@@ -375,6 +383,29 @@ class NotificationAvatarTest < Minitest::Test
       refute result.key?('_slackmine_avatar_parts')
       refute_includes JSON.generate(result), 'slackmine_avatar'
     end
+  end
+
+  def test_email_match_resolves_notification_avatar_without_name_matching
+    @settings['users'] = {}
+    @settings['slack'].merge!('auto_map_users_by_name' => false, 'auto_map_users_by_email' => true)
+    calls = []
+    result = deliver(configured_card('%{avatar} %{actor} *%{event}*'), lambda do |method, params, token, **options|
+      calls << method
+      case method
+      when 'users.list'
+        assert_equal({ 'limit' => 200 }, params)
+        { 'members' => [{ 'id' => 'U123', 'profile' => { 'email' => 'kota@example.com' } }] }
+      when 'users.info'
+        assert_equal({ 'user' => 'U123' }, params)
+        { 'user' => { 'profile' => { 'image_48' => @avatar } } }
+      else
+        flunk "Unexpected API: #{method}"
+      end
+    end)
+    assert_equal %w[users.list users.info], calls
+    heading = result.dig('attachments', 0, 'blocks', 0)
+    assert_equal 'context', heading['type']
+    assert_equal @avatar, heading['elements'].first['image_url']
   end
 
   def test_yaml_avatar_placeholder_is_removed_when_image_or_actor_is_unavailable
@@ -2437,6 +2468,33 @@ class WorkObjectNotificationTest < Minitest::Test
       @settings['users'].clear
       fallback = Slackmine::Formatter.issue_work_object_details(@issue).dig('entity_payload', 'fields')
       assert_equal({ 'text' => 'Alice' }, fallback.dig('assignee', 'user'))
+    end
+  end
+
+  def test_email_match_populates_assignee_and_creator_in_preview_and_details
+    user = User.new
+    user.login = 'alice'
+    user.mail = 'Alice@Example.com'
+    user.name = 'Alice'
+    @issue.assigned_to = @issue.author = user
+    @settings['users'] = {}
+    @settings['slack'].merge!('bot_token' => 'token', 'auto_map_users_by_name' => false, 'auto_map_users_by_email' => true)
+    api = lambda do |method, params, token, **options|
+      assert_equal 'users.list', method
+      assert_equal({ 'limit' => 200 }, params)
+      { 'members' => [{ 'id' => 'U123ABC456', 'profile' => { 'email' => 'ALICE@example.com' } }] }
+    end
+    Slackmine.stub(:config, @settings) do
+      Slackmine.stub(:slack_api, api) do
+        preview = issue_payload.dig('metadata', 'entities', 0, 'entity_payload', 'fields')
+        details = Slackmine::Formatter.issue_work_object_details(@issue).dig('entity_payload', 'fields')
+        [preview, details].each do |fields|
+          %w[assignee created_by].each do |key|
+            assert_equal({ 'user_id' => 'U123ABC456' }, fields.dig(key, 'user'))
+          end
+        end
+        assert_equal 'Alice', Slackmine::Formatter.user_mention(user)
+      end
     end
   end
 

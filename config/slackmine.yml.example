@@ -37,11 +37,15 @@ slack:
   # SLACK_BOT_TOKEN can supply the shared token instead.
   bot_token: 'xoxb-REPLACE-ME'
   default_channel_id: 'C0123456789'
+  # When both user matching switches are enabled, the one written first wins.
+  # Explicit users mappings always take precedence over automatic matching.
   # Requires users:read and an app reinstall. Ambiguous names are not mentioned.
   auto_map_users_by_name: false
   # User email matching and channel name matching below do not control mentions.
   # Authorize Work Object details/thread replies using a unique active Redmine
   # user with a matching registered email. Explicit users mappings take priority.
+  # Also resolve outgoing Work Object assignee/creator and notification avatars
+  # from the primary Redmine email, without enabling mentions or DMs.
   # Requires users:read + users:read.email and an app reinstall.
   auto_map_users_by_email: false
   # Match project identifiers to bot-member channel names (case-insensitive;

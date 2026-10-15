@@ -97,10 +97,10 @@
   <p><%= l(:text_slackmine_admin_users) %></p>
   <div class="autoscroll">
     <table class="list">
-      <thead><tr><th><%= l(:label_user) %></th><th><%= l(:field_login) %></th><th><%= l(:field_mail) %></th><th><%= l(:label_slackmine_admin_mention) %></th></tr></thead>
+      <thead><tr><th><%= l(:label_user) %></th><th><%= l(:field_login) %></th><th><%= l(:field_mail) %></th><th><%= l(:label_slackmine_admin_mention) %></th><th><%= l(:label_slackmine_admin_match_method) %></th></tr></thead>
       <tbody>
         <% @users.each do |user| %>
-          <tr><td><%= link_to user.name, user_path(user) %></td><td><%= user.login %></td><td><%= user.mail %></td><td><%= @mentions[user.id] ? "<@#{@mentions[user.id]}>" : l(:label_slackmine_admin_unmapped) %></td></tr>
+          <tr><td><%= link_to user.name, user_path(user) %></td><td><%= user.login %></td><td><%= user.mail %></td><td><%= @mentions[user.id] ? "<@#{@mentions[user.id]}>" : l(:label_slackmine_admin_unmapped) %></td><td><%= @match_methods[user.id] ? l("label_slackmine_admin_match_#{@match_methods[user.id]}") : '—' %></td></tr>
         <% end %>
       </tbody>
     </table>

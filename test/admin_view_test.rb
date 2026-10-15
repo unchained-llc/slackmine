@@ -46,7 +46,7 @@ class AdminViewTest < Minitest::Test
     lookup = ActionView::LookupContext.new([File.expand_path('../app/views', __dir__)])
     view = View.new(lookup, {
       tab: tab, scope_project: nil, scope_projects: [['<script>project</script>', 1]],
-      pages: nil, labels: labels
+      pages: nil, labels: labels, match_methods: {}
     }.merge(assigns), nil)
     view.render(template: 'slackmine_admin/index')
   end
@@ -129,7 +129,7 @@ class AdminViewTest < Minitest::Test
     html = render_tab('settings', settings: { 'slack' => { 'files' => { 'force_restrict_transfer' => true },
                                                         'auto_map_users_by_email' => true } })
     assert_includes html, 'プロジェクト側で解除できません'
-    assert_includes html, 'メンション先の照合には使いません'
+    assert_includes html, '送信・管理画面のユーザー表示にも使います'
   end
 
   def test_project_table_uses_routing_and_preserves_closed_status
@@ -147,7 +147,9 @@ class AdminViewTest < Minitest::Test
   def test_user_table_renders_mentions_unmapped_users_and_orphaned_configuration
     users = [OpenStruct.new(id: 1, name: 'Alice', login: 'alice', mail: 'alice@example.com'),
              OpenStruct.new(id: 2, name: 'Bob', login: 'bob', mail: 'bob@example.com')]
-    html = render_tab('users', users: users, mentions: { 1 => 'U123', 2 => nil }, user_mapping: { 'old-account' => 'UOLD' })
+    html = render_tab('users', users: users, mentions: { 1 => 'U123', 2 => nil }, match_methods: { 1 => :email }, user_mapping: { 'old-account' => 'UOLD' })
+    assert_includes html, '照合方法'
+    assert_includes html, 'メールアドレス一致'
     assert_includes html, '&lt;@U123&gt;'
     assert_includes html, '対応なし'
     assert_includes html, 'old-account'

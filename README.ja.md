@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **1.5.7**。
+バージョン **1.5.9**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -258,7 +258,7 @@ Wiki ページ、News、作業時間、Version の削除通知は、後から追
 
 ![通知内容](docs/images/features/notification-formatting.webp)
 
-通知の見出しは既定ではアバターを表示しません。`messages.notification_headers` の書式に `%{avatar}` を追加した場合だけ、操作したユーザーの Slack アバターを表示します。`users` の対応表または `slack.auto_map_users_by_name` で Slack ユーザーを特定し、`users:read` 権限で画像を取得します。アバターは Bot Token・ユーザーごとに10分間キャッシュします。対応するユーザーや画像が見つからない場合、または取得に失敗した場合は従来の見出しを表示します。本文だけを表示するスレッド内のコメント通知は対象外です。`messages.notification_headers` の `%{avatar}` で画像の位置を指定できます。既定の並びは「アイコン → 名前・イベント文言」です。画像は Slack の context ブロックで同じ行に表示するため、通常の section より文字が小さくなります。`%{avatar}` を省略した書式では画像を表示せず、通常の section の文字サイズを維持します。
+通知の見出しは既定ではアバターを表示しません。`messages.notification_headers` の書式に `%{avatar}` を追加した場合だけ、操作したユーザーの Slack アバターを表示します。`users` の対応表、`slack.auto_map_users_by_name`、または `slack.auto_map_users_by_email` で Slack ユーザーを特定し、`users:read` 権限で画像を取得します。アバターは Bot Token・ユーザーごとに10分間キャッシュします。対応するユーザーや画像が見つからない場合、または取得に失敗した場合は従来の見出しを表示します。本文だけを表示するスレッド内のコメント通知は対象外です。`messages.notification_headers` の `%{avatar}` で画像の位置を指定できます。既定の並びは「アイコン → 名前・イベント文言」です。画像は Slack の context ブロックで同じ行に表示するため、通常の section より文字が小さくなります。`%{avatar}` を省略した書式では画像を表示せず、通常の section の文字サイズを維持します。
 
 カードにはイベントの見出し、Redmine の対象レコードへのリンク、関連する本文や変更項目を表示します。Issue の作成・更新通知には設定した現在値のメタデータを含めますが、コメントのみの通知と削除通知には含めません。その他のイベントでは、以下の設定で無効にしない限りメタデータを表示します。`slack.attachment_color` はカードの左側の線の色を変更します。
 
@@ -377,7 +377,7 @@ projects:
 
 Slack アプリの管理画面でも **Work Object Previews → ON → Task を選択 → Save** を設定してください。ワークスペース側でプレビューが制限されている場合は、その設定も確認してください。通知は既存の [`chat.postMessage`](https://docs.slack.dev/reference/methods/chat.postMessage/) で送信します。通知プレビューだけのために新しいイベント購読やリンク展開のスコープを追加する必要はありません。[Slack の実装仕様](https://docs.slack.dev/messaging/work-objects-implementation/#notifications-implementation)
 
-件名・チケット番号・トラッカーを Work Object の見出しに使います。ステータス、優先度、担当者、作成者、期日は `slack.metadata.issue` で表示が有効な場合だけ標準フィールドとして送ります。プロジェクト、トラッカー、カテゴリ、更新者、対象バージョンも同じ表示設定に従ってカスタムフィールドとして送ります。ラベルには `messages.fields` を使います。それ以外の項目と説明文・コメント本文は既存の通知カードで表示します。担当者・作成者は表示名を使い、Work Object 用に新たなメンションやユーザー一覧取得を行いません。
+件名・チケット番号・トラッカーを Work Object の見出しに使います。ステータス、優先度、担当者、作成者、期日は `slack.metadata.issue` で表示が有効な場合だけ標準フィールドとして送ります。プロジェクト、トラッカー、カテゴリ、更新者、対象バージョンも同じ表示設定に従ってカスタムフィールドとして送ります。ラベルには `messages.fields` を使います。それ以外の項目と説明文・コメント本文は既存の通知カードで表示します。担当者・作成者は、明示的な対応表または有効な名前・メール照合でSlackユーザーを特定し、取得できない場合はRedmineの表示名を使います。この照合によってメンションは発生しません。
 
 チケットの URL の SHA-256 値を `external_ref.id` に使い、Slack の ID 文字制限を満たしながら、同じチケットの作成・更新・コメントで共通の識別子を送ります。別の Redmine の同番号チケットとは区別されます。Redmine のホスト名を変更すると識別子も変わります。リンク先の `url` は元のチケット URL のままです。
 
@@ -542,9 +542,9 @@ slack:
   auto_map_users_by_email: true
 ```
 
-Bot Tokenに [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) と [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) の両方を追加し、アプリを再インストールしてください。権限確認ごとに [`users.info`](https://docs.slack.dev/reference/methods/users.info/) で最新のユーザー情報を取得します。メール未取得・複数の有効ユーザーに一致・無効ユーザー・Bot・削除済みSlackユーザー・別ワークスペースのユーザー・APIエラー時は自動許可しません。設定された `slack.events.team_id` とSlackユーザーのワークスペースが一致する必要があります。メール情報はキャッシュせず、追加テーブル・Redis・ファイルへの保存や診断ログへの出力も行いません。`projects.<identifier>.slack.auto_map_users_by_email` で上書きできます。
+Bot Tokenに [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) と [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) の両方を追加し、アプリを再インストールしてください。権限確認ごとに [`users.info`](https://docs.slack.dev/reference/methods/users.info/) で最新のユーザー情報を取得します。メール未取得・複数の有効ユーザーに一致・無効ユーザー・Bot・削除済みSlackユーザー・別ワークスペースのユーザー・APIエラー時は自動許可しません。設定された `slack.events.team_id` とSlackユーザーのワークスペースが一致する必要があります。権限確認に使うメール情報はキャッシュせず、追加テーブル・Redis・ファイルへの保存や診断ログへの出力も行いません。`projects.<identifier>.slack.auto_map_users_by_email` で上書きできます。
 
-名前による `auto_map_users_by_name` は送信時のメンションと期日リマインダーの対応付け用です。メール一致は受信側の詳細閲覧・コメント権限確認用であり、送信時のメンションやDMを自動的に有効化するものではありません。
+名前による `auto_map_users_by_name` は送信時のメンションと期日リマインダーの対応付け用です。メール一致は、詳細閲覧・コメント権限確認に加え、Work Objectの担当者・作成者、通知アバター、管理画面のユーザー対応一覧にも使います。送信・表示用の照合はRedmineの主メールアドレスを使い、`users.list` のページ分割取得結果をBot Token・設定ワークスペースごとに10分キャッシュします。`users:read` と `users:read.email` 権限が必要です。キャッシュにはハッシュ化したメールアドレスの照合キーとSlack IDのみを保存し、生のメールアドレスやプロフィールは保存しません。明示的な対応表を優先します。`auto_map_users_by_name` と `auto_map_users_by_email` の両方が有効なら、YAMLで上に書いた設定から照合し、未一致・複数候補の場合は次の方法を試します。プロジェクトごとに順序を変える場合は、そのプロジェクト内で両方の設定を希望の順に記述します。管理画面の「照合方法」には実際に採用した明示設定（ログインID・メールアドレス）／名前一致／メールアドレス一致を表示します。該当なし・メール重複・Bot等のアカウント・ワークスペース不一致・APIエラーの場合はRedmineの名前表示を維持します。一覧取得の失敗時は同じBot Tokenでの照合を60秒待ち、例外クラスと安全な形式のSlackエラーコードのみを記録します。一覧取得は1ページ200人、最大10ページで、途中失敗時の一覧は使いません。この表示用キャッシュは権限付与やメール抑止には使わず、受信時の権限確認では従来どおり毎回 `users.info` を取得します。メンションやDMを自動的に有効化するものではありません。
 
 ### 親プロジェクトのチャンネルを継承する
 
@@ -850,7 +850,7 @@ users:
   'alice@example.com': null # メールアドレスにも対応付けていた場合
 ```
 
-`auto_map_users_by_email` はSlackからの閲覧・操作時の本人照合、`auto_map_channels_by_name` は通知先チャンネルの自動選択です。両方とも既定値は `false` ですが、メンションを止めるために変更する必要はありません。
+`auto_map_users_by_email` はSlackからの閲覧・操作時の本人照合と、担当者・作成者・通知アバターの表示、`auto_map_channels_by_name` は通知先チャンネルの自動選択です。両方とも既定値は `false` ですが、メンションを止めるために変更する必要はありません。
 
 新しい担当者には Slack の `<@U0123456789>` メンション形式を使います。Issue の作成者、Journal の作成者、Wiki の更新者、Issue 更新見出しの操作者には、自動メンションを付けず名前を表示します。
 
@@ -1251,6 +1251,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **1.5.9** | メール照合によるWork Objectのユーザー表示・通知アバターを修正。送信時のメール照合を一覧取得とキャッシュに変更し、ユーザーごとのAPI呼び出しを解消。管理画面に照合方法を表示し、名前・メール照合の優先順位をYAMLの記述順に対応。 |
 | **1.5.8** | チャンネル名の自動マッチをプロジェクト識別子との照合に変更。親プロジェクトの照合にも適用します。 |
 | **1.5.7** | 期日リマインダーDMで `cannot_dm_bot` が返ったbot宛先をスキップし、宛先IDをログに記録してほかの宛先への配信を継続します。 |
 | **1.5.6** | YAMLの `%{avatar}` で通知見出しにSlackアバターを任意表示できます。既定では表示せず、変数を省略した書式は通常の文字サイズを維持します。 |

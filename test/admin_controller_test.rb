@@ -138,6 +138,7 @@ class AdminControllerTest < Minitest::Test
     assert_equal 51, @controller.instance_variable_get(:@count)
     assert_equal [users.last], @controller.instance_variable_get(:@users)
     assert_equal({51 => 'UPROJECT'}, @controller.instance_variable_get(:@mentions))
+    assert_equal({51 => :explicit_login}, @controller.instance_variable_get(:@match_methods))
     assert_equal 'UPROJECT', @controller.instance_variable_get(:@user_mapping)['user50']
     assert_same prior, Thread.current[:slackmine_project]
   end
@@ -159,6 +160,43 @@ class AdminControllerTest < Minitest::Test
     assert_equal 'mapped', @controller.instance_variable_get(:@mapping_filter)
     assert_equal 1, @controller.instance_variable_get(:@count)
     assert_equal [users.last], @controller.instance_variable_get(:@users)
+  end
+
+  def test_email_mapping_lists_slack_users_once_for_all_candidates_and_refreshes
+    users = 250.times.map do |i|
+      user = User.new
+      user.login = "user#{i}"
+      user.mail = "user#{i}@example.com"
+      user.define_singleton_method(:id) { i + 1 }
+      user
+    end
+    members = users.map { |user| { 'id' => "U#{user.id}", 'profile' => { 'email' => user.mail } } }
+    settings = { 'slack' => { 'bot_token' => 'test', 'auto_map_users_by_email' => true } }
+    calls = []
+    @controller.params = { tab: 'users', scope_project_id: '', mapping_filter: 'mapped' }
+    Project.stub(:order, Scope.new([@project])) do
+      User.stub(:active, Scope.new(users)) do
+        Rails.stub(:cache, AutomaticUserMappingTest::MemoryCache.new) do
+          Slackmine.stub(:config, settings) do
+            Slackmine.stub(:slack_api, lambda { |method, params, *, **options|
+              assert_equal 'users.list', method
+              calls << params
+              params['cursor'] ? { 'members' => members.drop(200) } :
+                { 'members' => members.first(200), 'response_metadata' => { 'next_cursor' => 'next' } }
+            }) do
+              2.times do
+                @controller.index
+                assert_equal 250, @controller.instance_variable_get(:@count)
+                assert_equal 50, @controller.instance_variable_get(:@users).length
+                assert_equal 'U1', @controller.instance_variable_get(:@mentions)[1]
+                assert_equal [:email], @controller.instance_variable_get(:@match_methods).values.uniq
+              end
+            end
+          end
+        end
+      end
+    end
+    assert_equal [{ 'limit' => 200 }, { 'limit' => 200, 'cursor' => 'next' }], calls
   end
 
   def test_project_members_and_unmapped_filter_exclude_other_users
