@@ -4,6 +4,7 @@ require 'minitest/autorun'
 require 'ostruct'
 require 'date'
 require 'rake'
+require_relative 'quote_signing_support'
 
 class String
   def present?
@@ -33,7 +34,7 @@ end
 
 module Rails
   def self.application
-    @application ||= OpenStruct.new(config: OpenStruct.new(to_prepare: nil, after_initialize: nil))
+    @application ||= OpenStruct.new(config: OpenStruct.new(to_prepare: nil, after_initialize: nil), key_generator: QuoteTestKeyGenerator.new)
   end
 
   def self.cache
@@ -79,7 +80,7 @@ end
 
 class CustomField
   def self.find_by(id:)
-    OpenStruct.new(name: '顧客分類')
+    OpenStruct.new(name: '顧客分類', visible?: true)
   end
 end
 
@@ -1142,7 +1143,7 @@ class EventConfigurationTest < Minitest::Test
     assert_equal ['screenshot.png'], calls[1][2][:image_names]
     assert_equal 12, calls[1][2][:journal_id]
     assert_empty calls[3][2][:image_names]
-    assert_nil calls[3][2][:journal_id]
+    assert_equal 12, calls[3][2][:journal_id]
   end
 
   def test_issue_comment_removal_respects_setting_and_privacy
@@ -1331,11 +1332,7 @@ class EventConfigurationTest < Minitest::Test
     assert_equal expected_payload, calls[1][1]
     assert_equal expected_event, calls[1][2][:event]
     assert_equal expected_images, calls[1][2][:image_names]
-    if expected_journal_id.nil?
-      assert_nil calls[1][2][:journal_id]
-    else
-      assert_equal expected_journal_id, calls[1][2][:journal_id]
-    end
+    assert_equal 12, calls[1][2][:journal_id] # Every notification retains its journal for delivery authorization.
   end
 end
 
@@ -1570,29 +1567,32 @@ class ImageNotificationTest < Minitest::Test
     assert_equal '![English](english.png)', Slackmine::Formatter.mrkdwn('![English](english.png)')
   end
 
-  def test_four_argument_job_keeps_non_image_notifications_compatible_with_old_workers
+  def test_four_argument_job_retains_security_context_without_changing_argument_count
     project = OpenStruct.new(id: 6)
     queued = nil
     Slackmine.stub(:event_enabled?, true) do
       SlackmineNotificationJob.stub(:perform_later, ->(*args) { queued = args }) do
-        Slackmine.enqueue({ 'text' => 'Issue deleted' }, project: project, event: 'issue_deleted')
+        Slackmine.enqueue({ 'text' => 'Issue deleted' }, project: project, event: 'issue_deleted', issue_id: 7)
       end
     end
 
-    assert_equal [{ 'text' => 'Issue deleted' }, 6, [], nil], queued
+    assert_equal 'Issue deleted', queued[0]['text']
+    assert_equal 1, queued[0].dig('_slackmine_delivery_context', 'version')
+    assert_equal [6, [], -7], queued.drop(1)
   end
 
   def test_job_accepts_four_argument_issue_images_and_existing_five_argument_jobs
     project = OpenStruct.new(id: 6)
     calls = []
     Project.stub(:find_by, project) do
-      Slackmine.stub(:notify, ->(payload, **options) { calls << [payload, options] }) do
-        SlackmineNotificationJob.new.perform({ 'text' => 'created' }, 6, ['image.png'], -7105)
-        SlackmineNotificationJob.new.perform({ 'text' => 'created' }, 6, ['image.png'], nil, 7105)
-        SlackmineNotificationJob.new.perform({ 'text' => 'comment' }, 6, ['image.png'], 99)
+      Slackmine::NotificationSafety.stub(:allowed?, true) do
+        Slackmine.stub(:notify, ->(payload, **options) { calls << [payload, options] }) do
+          SlackmineNotificationJob.new.perform({ 'text' => 'created' }, 6, ['image.png'], -7105)
+          SlackmineNotificationJob.new.perform({ 'text' => 'created' }, 6, ['image.png'], nil, 7105)
+          SlackmineNotificationJob.new.perform({ 'text' => 'comment' }, 6, ['image.png'], 99)
+        end
       end
     end
-
     assert_equal 3, calls.length
     calls.first(2).each do |_payload, options|
       assert_equal 7105, options[:issue_id]
@@ -1605,7 +1605,7 @@ class ImageNotificationTest < Minitest::Test
   def test_new_issue_embeds_its_attached_image_in_the_colored_notification
     name = 'F0C57KUNXCH-__________2026-09-29_12.01.19.png'
     issue = Issue.new(7105)
-    issue.project = OpenStruct.new(id: 7)
+    issue.project = OpenStruct.new(id: 7, active?: true)
     issue.define_singleton_method(:description) { "Report\n\n![Attached image](#{name})" }
     issue.define_singleton_method(:author) { OpenStruct.new(name: 'Example Bot') }
     issue.define_singleton_method(:attachments) { [OpenStruct.new(id: 88, filename: name)] }
@@ -1615,15 +1615,18 @@ class ImageNotificationTest < Minitest::Test
     queued = nil
     posted = nil
 
-    Slackmine::Formatter.stub(:issue_payload, payload) do
-      Slackmine.stub(:event_enabled?, true) do
-        SlackmineNotificationJob.stub(:perform_later, ->(*args) { queued = args }) do
-          issue.extend(Slackmine::IssuePatch)
-          issue.send(:notify_slack_issue_created)
+    Slackmine.stub(:bot_token, 'token') do
+      Slackmine.stub(:channel_id, 'C123') do
+        Slackmine::Formatter.stub(:issue_payload, payload) do
+          Slackmine.stub(:event_enabled?, true) do
+            SlackmineNotificationJob.stub(:perform_later, ->(*args) { queued = args }) do
+              issue.extend(Slackmine::IssuePatch)
+              issue.send(:notify_slack_issue_created)
+            end
+          end
         end
       end
     end
-
     assert_equal [name], queued[2]
     assert_equal 4, queued.length
     assert_equal(-7105, queued[3])
@@ -3575,7 +3578,7 @@ class NotificationDisplaySettingsTest < Minitest::Test
       value.is_a?(Array) ? value.map(&render).join(', ') : render.call(value)
     end
     format = Object.new
-    custom_field = OpenStruct.new(id: 42, name: '顧客ID', format: format)
+    custom_field = OpenStruct.new(id: 42, name: '顧客ID', format: format, visible?: true)
     format.define_singleton_method(:formatted_value) do |helper, field, raw, customized, html|
       raise 'Wrong display context' unless helper.equal?(view) && field.equal?(custom_field) &&
                                           customized.equal?(issue) && html == false
@@ -3624,10 +3627,10 @@ class NotificationDisplaySettingsTest < Minitest::Test
     end
   end
 
-  def test_deleted_custom_fields_keep_raw_change_values
+  def test_deleted_custom_fields_do_not_export_values_without_visibility_evidence
     detail = OpenStruct.new(property: 'cf', prop_key: '42', old_value: '18', value: '19')
     CustomField.stub(:find_by, nil) do
-      assert_equal [['42', '18 → 19']], Slackmine::Formatter.change_fields(OpenStruct.new, [detail])
+      assert_empty Slackmine::Formatter.change_fields(OpenStruct.new, [detail])
     end
   end
 
@@ -3662,15 +3665,15 @@ class NotificationDisplaySettingsTest < Minitest::Test
 
   def test_optional_issue_metadata_includes_selected_version_relation_and_custom_field
     project = OpenStruct.new(name: 'Agentic')
-    related = OpenStruct.new(id: 12, subject: 'Related & visible')
+    related = OpenStruct.new(id: 12, subject: 'Related & visible', project: project)
     private_issue = OpenStruct.new(id: 13, subject: 'Private')
     private_issue.define_singleton_method(:is_private?) { true }
     relation = OpenStruct.new
     relation.define_singleton_method(:other_issue) { |_issue| related }
     relation.define_singleton_method(:relation_type_for) { |_issue| 'relates' }
     values = [
-      OpenStruct.new(custom_field: OpenStruct.new(id: 42, name: 'Customer'), value: 'Acme'),
-      OpenStruct.new(custom_field: OpenStruct.new(id: 43, name: 'Internal'), value: 'Hidden')
+      OpenStruct.new(custom_field: OpenStruct.new(id: 42, name: 'Customer', visible?: true), value: 'Acme'),
+      OpenStruct.new(custom_field: OpenStruct.new(id: 43, name: 'Internal', visible?: false), value: 'Hidden')
     ]
     issue = OpenStruct.new(id: 7, subject: 'Subject', description: '', project: project,
                            tracker: OpenStruct.new(name: 'Task'),
@@ -3719,7 +3722,7 @@ class NotificationDisplaySettingsTest < Minitest::Test
     issue = OpenStruct.new(id: 7, subject: 'Subject', description: '', status: nil, fixed_version: nil,
                            project: OpenStruct.new(name: 'Agentic'), tracker: OpenStruct.new(name: 'Task'))
     issue.define_singleton_method(:visible_custom_field_values) do
-      [OpenStruct.new(custom_field: OpenStruct.new(id: 42, name: 'Customer'), value: '')]
+      [OpenStruct.new(custom_field: OpenStruct.new(id: 42, name: 'Customer', visible?: true), value: '')]
     end
     settings = { 'slack' => { 'metadata' => { 'issue' => {
       'project' => false, 'updater' => false, 'tracker' => false, 'category' => false, 'priority' => false,

@@ -18,6 +18,8 @@ slack:
     restrict_transfer: false
     force_restrict_transfer: false
   # Slack permalink cards in issue descriptions/comments. Six-digit hex color.
+  # Automatic fetching requires verified user identity/channel membership and
+  # non-shared public/private channels. DMs remain ordinary links.
   # Override with projects.<identifier>.slack.link_cards.color.
   link_cards:
     # false disables Slack link fetching, new quote imports, and all card displays.

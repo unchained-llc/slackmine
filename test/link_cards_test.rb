@@ -18,6 +18,9 @@ class LinkCardsTest < Minitest::Test
     @calls = []
     @message = { 'ts' => '1791115675.755579', 'user' => 'U123', 'text' => '<script>alert(1)</script> &amp; hello' }
     @workspace = 'https://example.slack.com/'
+    @channel = { 'id' => 'C123', 'name' => 'example', 'is_private' => false, 'is_member' => true }
+    @members = ['U123']
+    @identity_allowed = true
   end
 
   def fetch(url = URL, **options)
@@ -28,10 +31,15 @@ class LinkCardsTest < Minitest::Test
         when 'auth.test' then { 'url' => @workspace }
         when 'conversations.history' then { 'messages' => body['oldest'] == '1791110000.000001' ? [@parent].compact : (@reply ? [] : [@message]) }
         when 'conversations.replies' then { 'messages' => [@message] }
-        when 'conversations.info' then { 'channel' => { 'name' => 'example' } }
+        when 'conversations.info' then { 'channel' => @channel }
+        when 'conversations.members' then { 'members' => @members }
         when 'users.info' then { 'user' => { 'profile' => { 'display_name' => 'Example User', 'image_48' => 'https://cdn.example.com/avatar.png' } } }
         end
-      }) { CARDS.fetch(@issue, @viewer, url, **options) }
+      }) do
+        CARDS.stub(:slack_identity, 'U123') do
+          Slackmine::WorkObjects.stub(:viewer_for, @identity_allowed ? @viewer : nil) { CARDS.fetch(@issue, @viewer, url, **options) }
+        end
+      end
     end
   end
 
@@ -186,11 +194,14 @@ class LinkCardsTest < Minitest::Test
         case method
         when 'auth.test' then { 'url' => @workspace }
         when 'conversations.history' then { 'messages' => body['oldest'] == @message['ts'] ? [@message] : [] }
-        when 'conversations.info' then { 'channel' => { 'name' => 'example' } }
+        when 'conversations.info' then { 'channel' => @channel }
+        when 'conversations.members' then { 'members' => @members }
         when 'bots.info' then bot
         end
       }) do
-        card = CARDS.fetch(@issue, @viewer, URL)
+        card = CARDS.stub(:slack_identity, 'U123') do
+          Slackmine::WorkObjects.stub(:viewer_for, @viewer) { CARDS.fetch(@issue, @viewer, URL) }
+        end
         assert_equal 'Example Monitor', card['author']
         assert card['thread_reply']
         assert_nil card['parent']

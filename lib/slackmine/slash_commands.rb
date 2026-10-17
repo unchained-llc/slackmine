@@ -71,7 +71,9 @@ module Slackmine
           scope = scope.open.where(assigned_to_id: viewer.id)
           scope = scope.where('issues.due_date <= ?', Date.current + 3).order(:due_date) if command == 'due'
         end
-        rows = scope.order(updated_on: :desc).limit(100).to_a.select { |issue| authorized_project?(issue.project, app, team) }.first(10)
+        rows = scope.order(updated_on: :desc).limit(100).to_a.select do |issue|
+          issue.visible?(viewer) && authorized_project?(issue.project, app, team)
+        end.first(10)
         return yield(rows.first) if rows.one? && block_given?
         rows.empty? ? [section(message('empty'))] : issue_list_payload(rows, command)
       when 'status', 'assign'

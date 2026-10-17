@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **1.5.9**。
+バージョン **1.6.0**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -1178,7 +1178,9 @@ slack:
 
 6桁の16進カラーのみ受け付け、省略・不正な値では `#6D5DFB` を使います。返信カードには「スレッドへの返信」、取得できた親投稿の短いプレビュー、親投稿へのリンクを表示します。親投稿には返信件数を表示します。リンクの `thread_ts` と投稿のメタデータから返信を判定し、選択した投稿と親投稿だけを取得します。スレッド全体は取り込みません。ユーザー・チャンネルへのメンションは名前を解決し、失敗時は元のラベルやIDを残します。Botのプロフィールがない場合は [`bots.info`](https://docs.slack.dev/reference/methods/bots.info/) を試します。
 
-閲覧はRedmineのチケット権限に従い、非公開コメントはそのコメントを読めるユーザーに限定します。閲覧者自身のSlackアカウント紐付け・チャンネル参加は要求しません。**リンクを保存すると、そのチケットの閲覧者にSlack本文（返信の場合は親投稿のプレビューを含む）を共有し、Redmineの本文欄に保存します。** Redmineアプリが対象会話に参加しており、履歴取得用の [`channels:history`](https://docs.slack.dev/reference/scopes/channels.history/) / [`groups:history`](https://docs.slack.dev/reference/scopes/groups.history/)（DMは [`im:history`](https://docs.slack.dev/reference/scopes/im.history/) / [`mpim:history`](https://docs.slack.dev/reference/scopes/mpim.history/)）と会話情報用の [`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/) / [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/)（DMは [`im:read`](https://docs.slack.dev/reference/scopes/im.read/) / [`mpim:read`](https://docs.slack.dev/reference/scopes/mpim.read/)）を持つ必要があります。投稿者・ユーザーメンション・Botのプロフィールには [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) を使います。スコープ追加後はアプリを再インストールしてください。プロジェクトのBot Tokenで認証されたワークスペースとリンクのホストを照合し、別ワークスペースのリンクは取得しません。
+リンク本文の自動取得には、操作したRedmineユーザーと一致する有効なSlackアカウントの対応付けと、チャンネル参加の確認が必要です。対象は共有されていない公開・非公開チャンネルで、本人とBotの両方の参加を確認します。DM・グループDM・Slack Connect・権限確認に失敗したURLは通常のリンクのままにします。Botにも参加と履歴・チャンネル情報の閲覧権限が必要です。非公開チャンネルの取得には `groups:history` と `groups:read` が必要です。参加者の確認には `conversations.members` 用の `channels:read`（公開）または `groups:read`（非公開）を使い、ワークスペースとURLのホストも照合します。**取得対象のチャンネル投稿を保存すると、本文はチケット・コメントの読者、API利用者、メール受信者に共有されます。** 確認画面を経由して意図的に転記するスレッド接続は、既存の参加確認・転記先権限確認を維持します。
+
+新規の保存済み引用には、Railsアプリケーションの鍵から用途別に導出したHMAC署名を付け、本文とメタデータの改ざんを検証します。旧形式の署名なし引用・改変された引用・別のアプリケーションや鍵で作成された引用は、発言者・チャンネルの帰属情報、添付との関連付け、アバターを除外した**未検証のテキスト**として表示します。既存本文の削除や自動署名は行いません。引用本文を編集しても、元URLから原文を再取得して別のカードを追加しません。再取得する場合は既存の引用ブロックを削除してからURLを保存します。アバターURLはメール内画像と共通のSlack・Gravatar許可リストに制限します。Railsアプリケーションの秘密鍵を変更すると、既存署名は無効になります。
 
 本文はSlackの [`mrkdwn`](https://docs.slack.dev/messaging/formatting-message-text/)（太字・斜体・取り消し線・リンク・引用・コード）と基本的なMarkdownの見出し・リスト・太字・リンクを整形します。標準絵文字の名前はUnicodeに変換し、独自絵文字は `:名前:` のまま残します。生HTMLは実行せず文字として表示し、リンク先はHTTP・HTTPS・mailtoに限定します。返信は履歴で取得できない場合 [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/) を試しますが、APIの制約や失敗で取得できない場合はリンク表示になります。添付ファイルは取り込みません。
 
@@ -1186,12 +1188,15 @@ slack:
 
 ## プライバシーと開発
 
+共有通知では、操作ユーザーの権限や表示設定に関係なく、ロールで閲覧を制限したカスタムフィールドとその変更前後の値を除外します。関連チケットの件名は、同じプロジェクトの非公開でないチケットに限ります。ワーカーは送信直前に、現在のチケット・コメントの非公開状態、所属プロジェクトと稼働状態、通知対象フィールド・関連先の公開状態、投入時の送信先・Tokenとの一致を再確認し、変更があれば通知を中止します。この確認情報がない更新前の待機ジョブは送信しません。導入時はWebとワーカーをまとめて再起動してください。送信済みの投稿や転記済みの本文は撤回されません。DM検索は本人のRedmine閲覧権限で絞り込み、返却する各チケットでも再確認します。
+
 チャンネル通知では、非公開 Issue と非公開 Journal のコメントを除外します。毎日の DM には、担当者が Redmine で閲覧できる非公開 Issue を含められます。非公開 Issue や非公開コメントの画像はアップロードしません。実際の `slackmine.yml` をコミットしたり、Bot Token をログ・設定例・サポート依頼に載せたりしないでください。Token が漏れた場合は更新してください。
 
 ローカルのテストスイートは次のコマンドで実行できます。
 
 ```bash
 ruby -Itest test/image_notification_test.rb
+ruby -Itest test/security_regressions_test.rb
 ruby -Itest test/standard_notifications_test.rb
 ruby -Itest test/slack_events_controller_test.rb
 ruby -Itest test/slash_commands_cache_test.rb
@@ -1251,6 +1256,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **1.6.0** | Slack連携のセキュリティを強化しました。引用時に本人とBotのチャンネル参加を確認し、通知では非公開情報を除外して送信前にも再確認します。引用の改変を検知し、DM検索の閲覧権限確認も強化しました。 |
 | **1.5.9** | メール照合によるWork Objectのユーザー表示・通知アバターを修正。送信時のメール照合を一覧取得とキャッシュに変更し、ユーザーごとのAPI呼び出しを解消。管理画面に照合方法を表示し、名前・メール照合の優先順位をYAMLの記述順に対応。 |
 | **1.5.8** | チャンネル名の自動マッチをプロジェクト識別子との照合に変更。親プロジェクトの照合にも適用します。 |
 | **1.5.7** | 期日リマインダーDMで `cannot_dm_bot` が返ったbot宛先をスキップし、宛先IDをログに記録してほかの宛先への配信を継続します。 |

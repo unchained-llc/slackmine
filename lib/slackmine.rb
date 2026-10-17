@@ -449,9 +449,12 @@ module Slackmine
     [true, scope]
   end
 
-  def enqueue(payload, project:, event: nil, image_names: [], journal_id: nil, issue_id: nil)
+  def enqueue(payload, project:, event: nil, image_names: [], journal_id: nil, issue_id: nil, source: nil)
     return unless project
     return if event && !event_enabled?(project, event)
+    context = NotificationSafety.context(project, event, issue_id, journal_id, source: source)
+    return unless context
+    payload = payload.merge('_slackmine_delivery_context' => context)
 
     # Keep the four-argument job contract for workers still running the
     # previous release. Journal IDs are positive; a negative ID identifies
@@ -470,6 +473,8 @@ module Slackmine
       end
 
       payload = payload.dup
+      context = payload.delete('_slackmine_delivery_context')
+      return if context && !NotificationSafety.allowed?(context, project)
       actor_id = payload.delete('_slackmine_actor_id')
       avatar_parts = payload.delete('_slackmine_avatar_parts')
       comment_issue_id = payload.delete('_slackmine_comment_issue_id')
@@ -485,6 +490,8 @@ module Slackmine
       end
       payload = with_notification_avatar(payload, actor_id, token, heading_parts: avatar_parts) if actor_id
       add_images(payload, image_names, journal_id, token, issue_id: issue_id) if image_names.present? && (journal_id || issue_id)
+      # Profile/file API calls can take time; recheck after them as well.
+      return if context && !NotificationSafety.allowed?(context, project)
       post_message(payload, channel, token)
     end
   rescue StandardError => e
@@ -745,6 +752,7 @@ require_relative 'slackmine/comment_threads'
 require_relative 'slackmine/channel_matching'
 require_relative 'slackmine/admin_overview'
 require_relative 'slackmine/job_monitor'
+require_relative 'slackmine/notification_safety'
 require_relative 'slackmine/mail_preference'
 
 

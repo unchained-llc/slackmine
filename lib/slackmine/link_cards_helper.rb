@@ -231,7 +231,8 @@ module Slackmine
     def header(card, time_formatter = nil, mail: false)
       timestamp = time_formatter && card['timestamp'] ? time_formatter.call(card['timestamp']) : card['timestamp']
       attributes = mail ? ' class="slackmine-mail-avatar"' : ' loading="lazy" style="width: 28px; height: 28px; border-radius: 6px; vertical-align: middle; margin-right: 6px"'
-      avatar = card['avatar'] ? %(<img src="#{SlackMarkup.escape(card['avatar'])}" alt="" width="28" height="28"#{attributes}>) : ''
+      safe_avatar = LinkQuotes.safe_avatar(card['avatar'])
+      avatar = safe_avatar ? %(<img src="#{SlackMarkup.escape(safe_avatar)}" alt="" width="28" height="28"#{attributes}>) : ''
       metadata = %(<strong>#{SlackMarkup.escape(card['author'])}</strong><span> · ##{SlackMarkup.escape(card['channel'])} · #{SlackMarkup.escape(timestamp)}</span>)
       content = if mail && !avatar.empty?
                   %(<span class="slackmine-mail-header-layout" style="display: inline-table; vertical-align: middle; border-collapse: collapse"><span style="display: table-cell; vertical-align: middle; padding-right: 6px; line-height: 0">#{avatar}</span><span style="display: table-cell; vertical-align: middle; line-height: 20px">#{metadata}</span></span>)
@@ -248,6 +249,10 @@ module Slackmine
 
     def render_card(card, url, project, time_formatter: nil, icon_html: nil)
       text = SlackMarkup.render(card['text'], card['names'] || {})
+      if card['verified'] == false
+        label = SlackMarkup.escape(link_message('unverified_quote', project: project))
+        return %(<span class="slackmine-link-card slackmine-unverified-quote" style="display: block; white-space: pre-wrap"><strong>#{label}</strong>\n#{text}</span>)
+      end
       wording = Slackmine.messages_config
       project_wording = wording.dig('projects', project.identifier.to_s, 'messages', 'link_cards', 'open') if project
       global_wording = wording.dig('messages', 'link_cards', 'open')
@@ -297,7 +302,7 @@ module Slackmine
           break if state[:count] >= 20 || Process.clock_gettime(Process::CLOCK_MONOTONIC) > state[:deadline]
           state[:count] += 1
           state[:cards][key] = if preview_source
-                                 fetch_for_project(project, url, api_cache: state[:api], deadline: state[:deadline]) if referenced?(preview_source, parse(url))
+                                 fetch_for_project(project, url, viewer: viewer, api_cache: state[:api], deadline: state[:deadline]) if referenced?(preview_source, parse(url))
                                else
                                  fetch(issue, viewer, url, journal_id: journal_id, api_cache: state[:api], deadline: state[:deadline])
                                end

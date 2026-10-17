@@ -80,6 +80,50 @@ class LinkQuotesTest < Minitest::Test
     assert_includes plain, 'Unique searchable wording'
   end
 
+  def test_saving_an_edited_quote_with_its_permalink_keeps_only_the_unverified_snapshot
+    source = %(<a href="#{URL}">source</a>) + "\n\n" + Q.encode(@card, URL)
+    source = source.sub('Unique searchable wording', 'Edited wording')
+    saved = import(source)
+    assert_equal source, saved
+    assert_empty @calls
+    entries = Q.blocks(saved)
+    assert_equal 1, entries.size
+    card = entries.first.last
+    refute card['verified']
+    html = Slackmine::LinkCards.render_card(card, URL, @issue.project)
+    doc = Nokogiri::HTML.fragment(html)
+    assert_equal 1, doc.css('.slackmine-unverified-quote').size
+    assert_includes doc.text, 'Edited wording'
+    assert_empty doc.css('.slackmine-link-card-header, img')
+    refute_includes doc.text, 'Example User'
+    assert_equal saved, import(saved)
+    assert_empty @calls
+  end
+
+  def test_editing_a_multi_message_quote_does_not_refetch_any_of_its_source_urls
+    second = URL.sub('755579', '755580')
+    card = @card.merge('source_urls' => [URL, second])
+    source = %(<a href="#{URL}">one</a><a href="#{second}">two</a>) + "\n\n" + Q.encode(card, URL)
+    source = source.sub('Unique searchable wording', 'Edited wording')
+    assert_equal source, import(source)
+    assert_empty @calls
+    entries = Q.blocks(source)
+    assert_equal 1, entries.size
+    refute entries.first.last['verified']
+    assert_equal [URL, second], entries.first.last['source_urls']
+    refute entries.first.last.key?('avatar')
+  end
+
+  def test_unsigned_legacy_quote_is_not_silently_replaced_or_duplicated_on_save
+    data = @card.reject { |key, _| key == 'text' }.merge('url' => URL)
+    quote = "[slack-quote:#{Base64.strict_encode64(JSON.generate(data))}:0123456789abcdef]\nLegacy wording\n[/slack-quote:0123456789abcdef]"
+    source = %(<a href="#{URL}">source</a>) + "\n\n" + quote
+    assert_equal source, import(source)
+    assert_empty @calls
+    assert_equal 1, Q.blocks(source).size
+    refute Q.blocks(source).first.last['verified']
+  end
+
   def test_parent_quote_is_also_plain_text_and_can_contain_closing_markers
     @card['thread_reply'] = true
     @card['parent_url'] = URL

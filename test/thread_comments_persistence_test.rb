@@ -7,10 +7,11 @@ require 'active_record'
 require 'sqlite3'
 require 'minitest/autorun'
 require 'ostruct'
+require_relative 'quote_signing_support'
 
 module Rails
   def self.application
-    OpenStruct.new(config: OpenStruct.new(to_prepare: nil, after_initialize: nil))
+    OpenStruct.new(config: OpenStruct.new(to_prepare: nil, after_initialize: nil), key_generator: QuoteTestKeyGenerator.new)
   end
 
   def self.logger
@@ -123,7 +124,9 @@ class ThreadCommentsPersistenceTest < Minitest::Test
     User.current = @previous_user
     @event = { 'type' => 'message', 'user' => 'U123', 'channel' => 'C123', 'text' => 'Reply from Slack',
                'thread_ts' => '1791001000.000001', 'ts' => '1791001000.000002' }
-    @settings = { 'slack' => { 'thread_comments' => true, 'thread_comment_batch' => { 'wait_seconds' => 0 }, 'bot_token' => 'test-token',
+    # These tests exercise notification-thread replies; explicit connection
+    # routing has its own suite and otherwise defaults to enabled.
+    @settings = { 'slack' => { 'thread_comments' => true, 'thread_connections' => false, 'thread_comment_batch' => { 'wait_seconds' => 0 }, 'bot_token' => 'test-token',
                               'default_channel_id' => 'C123', 'events' => {
                                 'app_id' => 'ATEST', 'team_id' => 'TTEST', 'signing_secret' => 'test-secret' } } }
     @parent = { 'ts' => @event['thread_ts'], 'bot_id' => 'B123', 'app_id' => 'ATEST', 'attachments' => [

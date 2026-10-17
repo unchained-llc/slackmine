@@ -73,6 +73,10 @@ module Slackmine
       end
     end
 
+    def allowed_url(source)
+      avatar_uri(source)&.to_s
+    end
+
     def fetch(source, seconds)
       uri = avatar_uri(source)
       return unless uri

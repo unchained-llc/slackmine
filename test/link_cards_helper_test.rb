@@ -145,7 +145,7 @@ class LinkCardsHelperTest < Minitest::Test
     end
   end
 
-  def test_editor_previews_render_edited_saved_quotes_without_fetching_slack
+  def test_editor_previews_mark_edited_saved_quotes_unverified_without_fetching_slack
     @view.controller_name = 'previews'
     @view.render_source = true
     @view.define_singleton_method(:format_time) { |value| value.iso8601 }
@@ -161,8 +161,9 @@ class LinkCardsHelperTest < Minitest::Test
           Slackmine::LinkCards.stub(:fetch_for_project, ->(*) { flunk 'Saved quotes must not fetch live links' }) do
             doc = Nokogiri::HTML.fragment(@view.textilizable(raw, object: object))
             assert_equal 1, doc.css('.slackmine-link-card').size
-            assert_includes doc.at_css('.slackmine-link-card-header').text, 'Alice'
-            assert_includes doc.at_css('.slackmine-link-card-text').text, 'Edited message'
+            assert_includes doc.at_css('.slackmine-unverified-quote').text, 'Unverified quote'
+            assert_includes doc.at_css('.slackmine-unverified-quote').text, 'Edited message'
+            refute_includes doc.text, 'Alice'
             assert_empty doc.css('script')
             refute_includes doc.to_html, '[slack-quote:'
             Slackmine.stub(:config, { 'slack' => { 'link_cards' => { 'redmine_enabled' => false } } }) do
@@ -320,7 +321,7 @@ class LinkCardsHelperTest < Minitest::Test
     @view.controller_name = 'mailer'
     @view.define_singleton_method(:format_time) { |value| value.iso8601 }
     card = { 'author' => 'Example', 'channel' => 'example', 'timestamp' => '2026-10-05T00:00:00Z',
-             'avatar' => 'https://example.com/avatar.png', 'text' => '*Test*' }
+             'avatar' => 'https://avatars.slack-edge.com/avatar.png', 'text' => '*Test*' }
     @issue.define_singleton_method(:description) { @description }
     url = LinkCardsTest::URL
     @issue.instance_variable_set(:@description, url + "\n\n" + Slackmine::LinkQuotes.encode(card, url))

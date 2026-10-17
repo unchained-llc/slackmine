@@ -54,12 +54,13 @@ module Slackmine
     def fetch(issue, viewer, url, journal_id: nil, api_cache: nil, deadline: nil)
       target = parse(url)
       return unless target && referenced?(source(issue, viewer, journal_id), target)
-      fetch_for_project(issue.project, url, api_cache: api_cache, deadline: deadline)
+      fetch_for_project(issue.project, url, viewer: viewer, api_cache: api_cache, deadline: deadline)
     end
 
     # Used at save time after authorizing the edited source, including new records.
-    def fetch_for_project(project, url, api_cache: nil, deadline: nil)
+    def fetch_for_project(project, url, viewer: nil, api_cache: nil, deadline: nil)
       return unless enabled?(project)
+      return unless viewer && viewer.logged?
 
       target = parse(url)
       return unless target
@@ -79,6 +80,30 @@ module Slackmine
         auth = call.call('auth.test', {})
         return unless URI.parse(auth['url'].to_s).host.to_s.downcase == target['host']
         channel = target['channel']
+        # A permalink is not authorization. Public and private channels both
+        # require bot membership and the initiating user's verified membership.
+        info = call.call('conversations.info', { 'channel' => channel })['channel']
+        return unless info.is_a?(Hash) && info['id'] == channel && [true, false].include?(info['is_private']) &&
+                      info['is_member'] == true && !info['is_im'] && !info['is_mpim'] &&
+                      !info['is_ext_shared'] && !info['is_shared'] && !info['is_org_shared']
+        slack_id = slack_identity(viewer, call)
+        return unless slack_id && WorkObjects.viewer_for(slack_id)&.id == viewer.id
+        cursor = nil
+        seen = {}
+        member = false
+        20.times do
+          params = { 'channel' => channel, 'limit' => 200 }
+          params['cursor'] = cursor if cursor
+          response = call.call('conversations.members', params)
+          if Array(response['members']).include?(slack_id)
+            member = true
+            break
+          end
+          cursor = response.dig('response_metadata', 'next_cursor').to_s
+          break if cursor.empty? || seen[cursor]
+          seen[cursor] = true
+        end
+        return unless member
         ts = target['ts']
         body = { 'channel' => channel, 'oldest' => ts, 'latest' => ts, 'inclusive' => true, 'limit' => 1 }
         result = call.call('conversations.history', body)
@@ -88,7 +113,6 @@ module Slackmine
           message = Array(result['messages']).find { |item| item['ts'] == ts }
         end
         return unless message
-        info = call.call('conversations.info', { 'channel' => channel })['channel'] || {}
         card = message_card(message, call)
         card['channel'] = info['name'] || channel
         root_ts = message['thread_ts'] || target['thread_ts']
@@ -109,6 +133,17 @@ module Slackmine
       end
     rescue Slackmine::SlackApiError, URI::InvalidURIError, Timeout::Error, IOError, SystemCallError
       nil
+    end
+
+    # Authorization never uses the outgoing display-name/directory caches.
+    def slack_identity(viewer, call)
+      mapping = Slackmine.user_mapping
+      key = [viewer.login.to_s, viewer.mail.to_s].find { |candidate| mapping.key?(candidate) }
+      id = mapping[key] if key
+      if !key && Slackmine.effective_config.dig('slack', 'auto_map_users_by_email') == true && !viewer.mail.to_s.strip.empty?
+        id = call.call('users.lookupByEmail', { 'email' => viewer.mail.to_s.strip }).dig('user', 'id')
+      end
+      id if id.is_a?(String) && id.match?(/\A[UW][A-Z0-9]+\z/)
     end
 
     def optional_call(call, method, body)
@@ -144,9 +179,12 @@ module Slackmine
       end
       text.scan(/<#([CDG][A-Z0-9]+)(?:\|[^>]+)?>/).flatten.uniq.first(20).each do |id|
         channel = optional_call(call, 'conversations.info', { 'channel' => id })['channel'] || {}
-        names[id] = channel['name']
+        # A public message can mention a private channel by ID. Do not use
+        # the bot's broader privileges to disclose that channel's name.
+        names[id] = channel['name'] if channel['is_private'] == false &&
+          !channel['is_ext_shared'] && !channel['is_shared'] && !channel['is_org_shared']
       end
-      avatar = nil unless avatar.to_s.match?(%r{\Ahttps://[^/]+/})
+      avatar = LinkQuotes.safe_avatar(avatar)
       { 'author' => author.to_s.empty? ? Formatter.message('link_cards', 'unknown_author') : author, 'avatar' => avatar,
         'text' => text, 'names' => names, 'timestamp' => Time.at(message['ts'].to_f).utc.iso8601 }
     end

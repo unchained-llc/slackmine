@@ -2,6 +2,7 @@
 require 'base64'
 require 'json'
 require 'securerandom'
+require 'openssl'
 
 module Slackmine
   # Quotes are plain text in existing description/notes columns, not a new table.
@@ -28,6 +29,9 @@ module Slackmine
         body = parent_text + "\n\n" + body
       end
       id = SecureRandom.hex(8)
+      data.delete('verified')
+      data.delete('signature')
+      data['signature'] = signature(data, body)
       "[slack-quote:#{Base64.strict_encode64(JSON.generate(data))}:#{id}]\n#{body}\n[/slack-quote:#{id}]"
     end
 
@@ -36,12 +40,27 @@ module Slackmine
       data = JSON.parse(Base64.strict_decode64(metadata))
       return unless data.is_a?(Hash) && LinkCards.parse(data['url'])
       return unless %w[author channel timestamp].all? { |key| data[key].is_a?(String) }
+      Time.iso8601(data['timestamp'])
       if data.key?('source_urls')
         urls = data['source_urls']
         target = identity(data['url'])
         return unless urls.is_a?(Array) && urls.size.between?(1, 20) && urls.first == data['url'] &&
                       urls.all? { |url| url.is_a?(String) && identity(url)&.first(2) == target.first(2) }
       end
+      digest = data.delete('signature')
+      data.delete('verified')
+      expected = signature(data, body)
+      verified = digest.is_a?(String) && digest.bytesize == expected.bytesize &&
+        digest.bytes.zip(expected.bytes).reduce(0) { |diff, (a, b)| diff | (a ^ b) }.zero?
+      unless verified
+        unverified = { 'url' => data['url'], 'text' => body, 'verified' => false,
+                 'author' => Formatter.message('link_cards', 'unverified_quote'), 'channel' => '', 'timestamp' => data['timestamp'] }
+        # Keep validated source references for deduplication only. They never
+        # authenticate the edited body, author or attachment associations.
+        unverified['source_urls'] = data['source_urls'] if data.key?('source_urls')
+        return unverified
+      end
+      data['verified'] = true
       Time.iso8601(data['timestamp'])
       return unless data['names'].nil? || valid_names?(data['names'])
       %w[thread_image_ids thread_file_ids].each do |key|
@@ -78,8 +97,12 @@ module Slackmine
     end
 
     def safe_avatar(value)
-      url = SlackMarkup.safe_url(value.to_s)
-      url if url && url.start_with?('https://')
+      MailInlineAvatar.allowed_url(value.to_s)
+    end
+
+    def signature(data, body)
+      key = Rails.application.key_generator.generate_key('slackmine/link-quotes/v1', 32)
+      OpenSSL::HMAC.hexdigest('SHA256', key, JSON.generate([data, body.gsub(/\r\n?/, "\n")]))
     end
 
     def blocks(text)
@@ -99,6 +122,9 @@ module Slackmine
         match = Regexp.last_match
         card = decode(match[1], match[3])
         next raw unless card
+        if card['verified'] == false
+          next Formatter.message('link_cards', 'unverified_quote', project: project) + "\n" + card['text']
+        end
         parent = card['parent']
         prefix = parent ? LinkCards.link_message('plain_parent', project: project, author: parent['author'], text: parent['text']) : ''
         LinkCards.link_message('plain_quote', project: project, author: card['author'], channel: card['channel'], timestamp: card['timestamp'], urls: Array(card['source_urls'] || card['url']).join("\n"), prefix: prefix, text: card['text'])
@@ -122,6 +148,8 @@ module Slackmine
       links = Nokogiri::HTML.fragment(html).css('a[href]').reject do |anchor|
         anchor.ancestors.any? { |node| %w[pre code].include?(node.name) }
       end.map { |anchor| anchor['href'] }.select { |url| LinkCards.parse(url) }
+      # Editing a snapshot invalidates its signature; it is not a request to
+      # fetch the original again and append a second, authenticated card.
       imported = existing.flat_map { |_, card| Array(card['source_urls'] || card['url']).map { |url| identity(url) } }
       cache = {}
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
@@ -135,7 +163,7 @@ module Slackmine
         card = if snapshot
                  thread_message_card(snapshot[:message], issue.project, cache, deadline)
                else
-                 LinkCards.fetch_for_project(issue.project, url, api_cache: cache, deadline: deadline)
+                 LinkCards.fetch_for_project(issue.project, url, viewer: viewer, api_cache: cache, deadline: deadline)
                end
         next unless card
         # Notification replies already have their parent comment in Redmine.
