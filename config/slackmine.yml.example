@@ -18,8 +18,16 @@ slack:
     restrict_transfer: false
     force_restrict_transfer: false
   # Slack permalink cards in issue descriptions/comments. Six-digit hex color.
+  # Automatic fetching requires verified user identity/channel membership and
+  # non-shared public/private channels. DMs remain ordinary links.
   # Override with projects.<identifier>.slack.link_cards.color.
   link_cards:
+    # Sign newly saved quotes. Independent of verification; existing quotes stay intact.
+    # Both switches default to true, accept boolean false, and support project overrides.
+    sign_quotes: true
+    # Verify signatures when reading saved quotes.
+    # Signing off + verification on displays new unsigned quotes as unverified.
+    verify_signatures: true
     # false disables Slack link fetching, new quote imports, and all card displays.
     # Existing saved quotes remain readable as plain text. Defaults to true.
     enabled: true

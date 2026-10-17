@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.5.9**.
+Version **1.6.0**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1191,7 +1191,29 @@ slack:
 
 Only six-digit hex colors are accepted; omitted or invalid values use `#6D5DFB`. Thread replies have a reply label, a compact parent preview when available, and a link to the parent. Parent messages show their reply count. Only the selected message and its parent are fetched, not the entire thread. Both permalink query parameters (`thread_ts`) and message metadata identify replies. Users and channel mentions are resolved to names; failed lookups retain the supplied label or ID. Missing bot profiles are looked up with [`bots.info`](https://docs.slack.dev/reference/methods/bots.info/).
 
-Access follows Redmine issue and private-note permissions. Viewers do not need a mapped Slack account or channel membership: **saving a link shares and stores its message content (and parent preview for a reply) for readers of that issue or note.** The configured project bot must be a conversation member and have the appropriate history scope ([`channels:history`](https://docs.slack.dev/reference/scopes/channels.history/), [`groups:history`](https://docs.slack.dev/reference/scopes/groups.history/), [`im:history`](https://docs.slack.dev/reference/scopes/im.history/), or [`mpim:history`](https://docs.slack.dev/reference/scopes/mpim.history/)) and conversation-read scope ([`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/), [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/), [`im:read`](https://docs.slack.dev/reference/scopes/im.read/), or [`mpim:read`](https://docs.slack.dev/reference/scopes/mpim.read/)). Author, user-mention and bot profiles use [`users:read`](https://docs.slack.dev/reference/scopes/users.read/). Reinstall the app after adding scopes. The permalink host must match the bot's authenticated workspace.
+Automatic permalink fetching requires a mapped, active Slack identity matching the requesting Redmine user and verified channel membership. Public and private non-shared channels are eligible when both the requesting user and bot are verified members; DMs, group DMs, Slack Connect channels and failed authorization remain ordinary links. The project bot must also be a member with the appropriate history/read scopes (`groups:history` and `groups:read` for private channels); member verification uses `conversations.members` with `channels:read` for public channels or `groups:read` for private channels. The permalink host must match the bot's authenticated workspace. **Saving an eligible channel link shares and stores its message content for readers of that issue or note, API clients and email recipients.** The separately confirmed thread-connection import retains its source-membership and destination-permission checks for intentional transfers.
+
+New saved quotes authenticate their metadata and complete body with a purpose-specific HMAC key derived from the Rails application key generator. Unsigned legacy quotes, altered quotes, and quotes from another application/key are shown as **unverified text**, without author/channel attribution, attachment associations or avatar images. Existing content is not deleted or silently signed. Editing a quote does not refetch its original permalink or append a second authenticated card. To fetch a fresh copy, remove the existing quote block before saving its permalink. Avatar URLs use the constrained Slack/Gravatar allowlist shared with inline email images. Rotating the Rails application secret invalidates existing quote signatures.
+
+`slack.link_cards.sign_quotes` (sign new quotes) and `slack.link_cards.verify_signatures` (verify saved quotes) are independent switches, both defaulting to `true`. Boolean `false` disables each independently. With signing off and verification on, new unsigned quotes appear as unverified. With verification off, unsigned or altered quotes display with attribution. Changing the signing setting does not rewrite existing quotes. Metadata validation, avatar URL restrictions and Slack fetch authorization remain enforced. Both switches support project overrides. Restart web and worker processes after configuration changes.
+
+```yaml
+slack:
+  link_cards:
+    sign_quotes: true
+    verify_signatures: true
+```
+
+Administrators can explicitly sign trusted, unchanged legacy snapshots using the task below, regardless of the `sign_quotes` setting. It uses the stored body and metadata without refetching Slack; the operator must establish their authenticity.
+
+```sh
+# Dry run
+bundle exec rake slackmine:sign_legacy_quotes RAILS_ENV=production
+# Apply with a new backup file
+bundle exec rake slackmine:sign_legacy_quotes apply=true backup=/secure/path/legacy-quotes.jsonl RAILS_ENV=production
+```
+
+The task scans all issue descriptions and journal notes and backs up original and updated text to a new mode `0600` JSONL file before adding signatures. It preserves body, attribution and timestamps without notifications or extra journals. Existing signatures are never replaced. Malformed quotes are counted as `invalid` and left untouched. Repeated runs leave signed quotes unchanged.
 
 Slack [`mrkdwn`](https://docs.slack.dev/messaging/formatting-message-text/) emphasis, strike-through, links, quotes and code are rendered, along with basic Markdown headings, lists, bold text and links. Standard emoji shortcodes become Unicode; custom emoji retain their shortcode. Raw HTML stays literal and links allow only HTTP, HTTPS and mailto. A reply not found in history is attempted through [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/); API restrictions or failure may leave it as a normal link. Files are not imported.
 
@@ -1215,12 +1237,15 @@ At most 20 unique links are considered per save, with a five-second budget for s
 
 ## Privacy and development
 
+Shared notifications exclude role-restricted custom fields and their old/new change values regardless of the actor or display switches. Related issue subjects are exported only for non-private issues in the same project. Workers recheck current issue/note privacy, project ownership/activity, exposed field/related-issue visibility, and the queued channel/token identity immediately before delivery. Changes cancel the queued notification. Jobs queued before this security context was introduced are skipped; restart web and workers together when deploying. Already delivered messages and previously copied quotes are not recalled. DM searches use the requesting Redmine user's visibility scope and recheck every returned issue.
+
 Channel notifications exclude private Issues and private Journal notes. Daily DMs may include private Issues only when the assignee can view them in Redmine. Images from private Issues or notes are not uploaded. Do not commit a real `slackmine.yml` or expose the Bot Token in logs, examples, or support requests. Rotate a token if it is exposed.
 
 The repository's local test suite can be run with:
 
 ```bash
 ruby -Itest test/image_notification_test.rb
+ruby -Itest test/security_regressions_test.rb
 ruby -Itest test/admin_controller_test.rb
 ruby -Itest test/standard_notifications_test.rb
 ruby -Itest test/slack_events_controller_test.rb
@@ -1285,6 +1310,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.6.0** | Strengthened Slack integration security. Quote imports verify channel membership for both the user and bot. Notifications exclude private information and recheck access before sending. Added quote tampering detection, independent signing and verification switches, a legacy quote signing task, and stronger permission checks for DM searches. |
 | **1.5.9** | Fix email-matched Work Object identities and notification avatars. Cache outgoing email matching through paginated user listings to avoid per-user API requests, show the winning match method in the admin overview, and prioritize automatic name/email matching by YAML declaration order. |
 | **1.5.8** | Match Slack channel names to Redmine project identifiers, including ancestor projects. |
 | **1.5.7** | Skip bot destinations rejected with `cannot_dm_bot` in due-date reminder DMs, log the recipient IDs, and continue delivery to other destinations. |

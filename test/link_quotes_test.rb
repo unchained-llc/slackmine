@@ -80,6 +80,163 @@ class LinkQuotesTest < Minitest::Test
     assert_includes plain, 'Unique searchable wording'
   end
 
+  def test_saving_an_edited_quote_with_its_permalink_keeps_only_the_unverified_snapshot
+    source = %(<a href="#{URL}">source</a>) + "\n\n" + Q.encode(@card, URL)
+    source = source.sub('Unique searchable wording', 'Edited wording')
+    saved = import(source)
+    assert_equal source, saved
+    assert_empty @calls
+    entries = Q.blocks(saved)
+    assert_equal 1, entries.size
+    card = entries.first.last
+    refute card['verified']
+    html = Slackmine::LinkCards.render_card(card, URL, @issue.project)
+    doc = Nokogiri::HTML.fragment(html)
+    assert_equal 1, doc.css('.slackmine-unverified-quote').size
+    assert_includes doc.text, 'Edited wording'
+    assert_empty doc.css('.slackmine-link-card-header, img')
+    refute_includes doc.text, 'Example User'
+    assert_equal saved, import(saved)
+    assert_empty @calls
+  end
+
+  def test_editing_a_multi_message_quote_does_not_refetch_any_of_its_source_urls
+    second = URL.sub('755579', '755580')
+    card = @card.merge('source_urls' => [URL, second])
+    source = %(<a href="#{URL}">one</a><a href="#{second}">two</a>) + "\n\n" + Q.encode(card, URL)
+    source = source.sub('Unique searchable wording', 'Edited wording')
+    assert_equal source, import(source)
+    assert_empty @calls
+    entries = Q.blocks(source)
+    assert_equal 1, entries.size
+    refute entries.first.last['verified']
+    assert_equal [URL, second], entries.first.last['source_urls']
+    refute entries.first.last.key?('avatar')
+  end
+
+  def test_unsigned_legacy_quote_is_not_silently_replaced_or_duplicated_on_save
+    data = @card.reject { |key, _| key == 'text' }.merge('url' => URL)
+    quote = "[slack-quote:#{Base64.strict_encode64(JSON.generate(data))}:0123456789abcdef]\nLegacy wording\n[/slack-quote:0123456789abcdef]"
+    source = %(<a href="#{URL}">source</a>) + "\n\n" + quote
+    assert_equal source, import(source)
+    assert_empty @calls
+    assert_equal 1, Q.blocks(source).size
+    refute Q.blocks(source).first.last['verified']
+  end
+
+  def legacy_quote(card = @card)
+    data = card.reject { |key, _| key == 'text' }.merge('url' => URL)
+    "[slack-quote:#{Base64.strict_encode64(JSON.generate(data))}:0123456789abcdef]\n#{Q.resolved_text(card)}\n[/slack-quote:0123456789abcdef]"
+  end
+
+  def test_signing_defaults_on_and_only_boolean_false_disables_it
+    [nil, true, 'false', 0].each do |value|
+      Slackmine.stub(:config, { 'slack' => { 'link_cards' => { 'sign_quotes' => value } } }) do
+        assert Q.signing_enabled?
+        assert Q.blocks(Q.encode(@card, URL)).first.last['verified']
+      end
+    end
+    Slackmine.stub(:config, { 'slack' => { 'link_cards' => { 'sign_quotes' => false } } }) do
+      Q.stub(:signature, ->(*) { flunk 'Signing disabled must not use the key' }) do
+        quote = Q.encode(@card.merge('signature' => 'stale', 'verified' => true), URL)
+        metadata = JSON.parse(Base64.strict_decode64(Q::PATTERN.match(quote)[1]))
+        refute metadata.key?('signature')
+        refute metadata.key?('verified')
+      end
+    end
+  end
+
+  def test_signing_and_verification_are_independent_in_all_four_combinations
+    [true, false].product([true, false]).each do |sign, verify|
+      settings = { 'slack' => { 'link_cards' => { 'sign_quotes' => sign, 'verify_signatures' => verify } } }
+      Slackmine.stub(:config, settings) do
+        quote = Q.encode(@card, URL)
+        metadata = JSON.parse(Base64.strict_decode64(Q::PATTERN.match(quote)[1]))
+        assert_equal sign, metadata.key?('signature')
+        card = Q.blocks(quote).first.last
+        assert_equal sign || !verify, card['verified']
+        assert_includes card['text'], 'Unique searchable wording'
+      end
+    end
+  end
+
+  def test_project_signing_override_applies_when_importing_without_thread_context
+    settings = { 'slack' => { 'link_cards' => { 'sign_quotes' => true } },
+                 'projects' => { 'example' => { 'slack' => { 'link_cards' => { 'sign_quotes' => false } } } } }
+    Slackmine.stub(:config, settings) do
+      assert Q.signing_enabled?(nil)
+      refute Q.signing_enabled?(@issue.project)
+      quote = import(%(<a href="#{URL}">source</a>))
+      metadata = JSON.parse(Base64.strict_decode64(Q::PATTERN.match(quote)[1]))
+      refute metadata.key?('signature')
+      refute Q.blocks(quote, project: @issue.project).first.last['verified']
+      assert Q.blocks(Q.encode(@card, URL, project: nil)).first.last['verified']
+      signed, = Q.sign_legacy(quote)
+      assert Q.blocks(signed, project: @issue.project).first.last['verified']
+    end
+  end
+
+  def test_verification_defaults_on_and_only_boolean_false_disables_it
+    quote = legacy_quote
+    [nil, true, 'false', 0].each do |value|
+      Slackmine.stub(:config, { 'slack' => { 'link_cards' => { 'verify_signatures' => value } } }) do
+        refute Q.blocks(quote).first.last['verified']
+      end
+    end
+    Slackmine.stub(:config, { 'slack' => { 'link_cards' => { 'verify_signatures' => false } } }) do
+      assert_equal 'Example User', Q.blocks(quote).first.last['author']
+      edited = Q.encode(@card, URL).sub('Unique searchable wording', 'Edited')
+      assert_equal 'Example User', Q.blocks(edited).first.last['author']
+      # Signature opt-out still enforces metadata and avatar validation.
+      invalid = legacy_quote(@card.merge('names' => [], 'text' => 'plain'))
+      assert_empty Q.blocks(invalid)
+      assert_nil Q.blocks(quote).first.last['avatar']
+    end
+  end
+
+  def test_verification_supports_explicit_project_overrides_and_plain_text
+    settings = { 'slack' => { 'link_cards' => { 'verify_signatures' => false } },
+                 'projects' => { 'example' => { 'slack' => { 'link_cards' => { 'verify_signatures' => true } } } } }
+    Slackmine.stub(:config, settings) do
+      quote = legacy_quote
+      assert Q.blocks(quote, project: nil).first.last['verified']
+      refute Q.blocks(quote, project: @issue.project).first.last['verified']
+      assert_includes Q.plain_source(quote, project: nil), 'Example User'
+      refute_includes Q.plain_source(quote, project: @issue.project), 'Example User'
+      match = Q::PATTERN.match(quote)
+      refute Q.decode(match[1], match[3], verify: true)['verified']
+    end
+  end
+
+  def test_explicit_legacy_signing_preserves_body_metadata_and_is_idempotent
+    quote = legacy_quote.gsub("\n", "\r\n")
+    source = "Before\n#{quote}\nAfter"
+    updated, counts = Q.sign_legacy(source)
+    assert_equal({ signed: 1 }, counts)
+    before = Q::PATTERN.match(source)
+    after = Q::PATTERN.match(updated)
+    assert_equal before[2], after[2]
+    assert_equal before[3], after[3]
+    old_data = JSON.parse(Base64.strict_decode64(before[1]))
+    new_data = JSON.parse(Base64.strict_decode64(after[1]))
+    assert new_data.delete('signature')
+    assert_equal old_data, new_data
+    assert_equal source.sub(before[1], after[1]), updated
+    assert Q.blocks(updated).first.last['verified']
+    again, counts = Q.sign_legacy(updated)
+    assert_equal updated, again
+    assert_equal({ skipped: 1 }, counts)
+  end
+
+  def test_legacy_signing_does_not_resign_invalid_signatures_or_malformed_metadata
+    edited = Q.encode(@card, URL).sub('Unique searchable wording', 'Edited')
+    invalid = legacy_quote(@card.merge('names' => [], 'text' => 'plain'))
+    source = edited + invalid
+    updated, counts = Q.sign_legacy(source)
+    assert_equal source, updated
+    assert_equal({ skipped: 1, invalid: 1 }, counts)
+  end
+
   def test_parent_quote_is_also_plain_text_and_can_contain_closing_markers
     @card['thread_reply'] = true
     @card['parent_url'] = URL

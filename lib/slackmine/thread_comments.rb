@@ -306,7 +306,7 @@ module Slackmine
             card = entry['card'].dup
             card['thread_image_ids'] = image_maps[index][:ids] unless image_maps[index][:ids].empty?
             card['thread_file_ids'] = file_maps[index][:ids] unless file_maps[index][:ids].empty?
-            LinkQuotes.encode(card, urls[index])
+            LinkQuotes.encode(card, urls[index], project: issue.project)
           end
           journal.notes = notes + "\n\n" + quotes.join("\n\n")
           journal.notes += "\n\n" + references.join("\n\n") unless attachments.empty?

@@ -328,6 +328,7 @@ messages:
       Attachments: %{count}
     history_heading: Conversation imported from a Slack thread (before connection)
   link_cards:
+    unverified_quote: 'Unverified quote (author and source not authenticated)'
     open: Open in Slack
     parent_open: Open parent message in Slack
     thread_reply: "↳ Thread reply"

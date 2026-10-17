@@ -328,6 +328,7 @@ messages:
       添付: %{count}件
     history_heading: Slackスレッドから取り込み（接続前の会話）
   link_cards:
+    unverified_quote: '未検証の引用（発言者・出典の真正性は確認されていません）'
     open: Slackで開く
     parent_open: Slackで親メッセージを開く
     thread_reply: ↳ スレッド返信

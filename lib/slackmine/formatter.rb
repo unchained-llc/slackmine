@@ -870,8 +870,8 @@ module Slackmine
         'due_date' => -> { text(issue.due_date) },
         'estimated_hours' => -> { text(issue.estimated_hours) },
         'done_ratio' => -> { issue.done_ratio && "#{issue.done_ratio}%" },
-        'parent_issue' => -> { issue.parent && issue_link(issue.parent) },
-        'children' => -> { issue_list(issue.children) },
+        'parent_issue' => -> { issue.parent && issue_link(issue.parent, project: issue.project) },
+        'children' => -> { issue_list(issue.children, project: issue.project) },
         'relations' => -> { issue_relations(issue) },
         'attachments' => -> { issue.attachments.map { |attachment| text(attachment.filename) }.join(', ') },
         'watchers' => -> { issue.visible_watcher_users.map { |watcher| text(watcher.name) }.join(', ') }
@@ -890,7 +890,7 @@ module Slackmine
         count = fields.length
         issue.visible_custom_field_values.each do |custom_value|
           custom_field = custom_value.custom_field
-          next unless custom_field && custom_field_enabled?(custom_field.id, action: action)
+          next unless public_custom_field?(custom_field) && custom_field_enabled?(custom_field.id, action: action)
 
           value = custom_field_value_text(custom_value)
           fields << ['custom_fields', value.empty? ? text(message('values', 'unset')) : text(value[0, 1800]), custom_field.name]
@@ -915,21 +915,22 @@ module Slackmine
       view.format_object(formatted, html: false).to_s
     end
 
-    def issue_link(related)
+    def issue_link(related, project: nil)
       return nil if related.respond_to?(:is_private?) && related.is_private?
+      return nil if project && related.project != project
 
       "<#{url('/issues/' + related.id.to_s)}|##{related.id} #{text(related.subject)}>"
     end
 
-    def issue_list(issues)
-      links = Array(issues).first(20).map { |related| issue_link(related) }.compact
+    def issue_list(issues, project: nil)
+      links = Array(issues).first(20).map { |related| issue_link(related, project: project) }.compact
       links.join(', ')
     end
 
     def issue_relations(issue)
       Array(issue.relations).first(20).map do |relation|
         related = relation.other_issue(issue)
-        link = issue_link(related) if related
+        link = issue_link(related, project: issue.project) if related
         "#{text(relation_type_label(relation.relation_type_for(issue)))}: #{link}" if link
       end.compact.join("\n")
     end
@@ -950,6 +951,9 @@ module Slackmine
     end
 
     def visible_issue_changes(details)
+      # Channel audiences are not Redmine roles. Only globally visible fields
+      # may be exported, even when the actor is an administrator.
+      details = public_changes(details)
       return details if Slackmine.effective_config.dig('slack', 'issue_changes_when_hidden') != false
 
       details.select do |detail|
@@ -968,15 +972,28 @@ module Slackmine
       end
     end
 
+    def public_custom_field?(field)
+      field && field.respond_to?(:visible?) && field.visible? == true
+    end
+
+    def public_changes(details)
+      details.reject do |detail|
+        detail.respond_to?(:property) && detail.property == 'cf' &&
+          !public_custom_field?(CustomField.find_by(id: detail.prop_key))
+      end
+    end
+
     def change_fields(issue, details)
-      details.each_with_object([]) do |detail, changes|
+      public_changes(details).each_with_object([]) do |detail, changes|
         label = detail_label(detail)
         next unless label
 
         value = if detail.property == 'relation'
                   relation_id = detail.value.presence || detail.old_value
                   action = message('values', detail.value.present? ? 'added' : 'removed')
-                  "#{action}: #{relation_issue_link(relation_id)}"
+                  link = relation_issue_link(relation_id, project: issue&.project)
+                  next unless link
+                  "#{action}: #{link}"
                 elsif detail.property == 'attachment'
                   action = message('values', detail.value.present? ? 'added' : 'removed')
                   filename = detail.value.presence || detail.old_value
@@ -984,7 +1001,7 @@ module Slackmine
                 elsif detail.property == 'attr' && detail.prop_key == 'description'
                   next
                 elsif detail.property == 'attr' && %w[parent_id child_id].include?(detail.prop_key)
-                  "#{issue_reference(detail.old_value)} → #{issue_reference(detail.value)}"
+                  "#{issue_reference(detail.old_value, project: issue&.project)} → #{issue_reference(detail.value, project: issue&.project)}"
                 else
                   "#{detail_old_value(detail, issue: issue)} → #{detail_new_value(issue, detail)}"
                 end
@@ -998,8 +1015,8 @@ module Slackmine
       end
     end
 
-    def issue_reference(issue_id)
-      issue_id.present? ? relation_issue_link(issue_id) : message('values', 'none')
+    def issue_reference(issue_id, project: nil)
+      (issue_id.present? && relation_issue_link(issue_id, project: project)) || message('values', 'none')
     end
 
     def issue_fields(issue, details)
@@ -1094,7 +1111,7 @@ module Slackmine
                     fallback: DEFAULT_MESSAGES.dig('templates', 'relation_fallback'))
     end
 
-    def relation_issue_link(issue_id)
+    def relation_issue_link(issue_id, project: nil)
       related_issue = Issue.find_by(id: issue_id)
       unless related_issue
         id = issue_id.to_s
@@ -1102,6 +1119,9 @@ module Slackmine
         return "<#{url('/issues/' + id)}|##{id}>"
       end
 
+      return nil if related_issue.is_private? || (project && related_issue.project != project)
+      # Without a source project there is no safe audience for a subject.
+      return "<#{url('/issues/' + related_issue.id.to_s)}|##{related_issue.id}>" unless project
       "<#{url('/issues/' + related_issue.id.to_s)}|##{related_issue.id} #{text(related_issue.subject)}>"
     end
   end

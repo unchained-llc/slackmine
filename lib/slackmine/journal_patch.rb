@@ -25,7 +25,7 @@ module Slackmine
       return if issue.is_private? || private_notes?
 
       comment_enabled = !notes.to_s.strip.empty? && Slackmine.event_enabled?(issue.project, 'comment_added')
-      enabled_details = details.select do |detail|
+      enabled_details = Slackmine::Formatter.public_changes(details).select do |detail|
         Slackmine.event_enabled?(issue.project, slack_event_for_detail(detail))
       end
       return unless comment_enabled || enabled_details.any?
@@ -49,7 +49,7 @@ module Slackmine
         project: issue.project,
         event: enabled_details.any? ? slack_event_for_detail(enabled_details.first) : 'comment_added',
         image_names: comment_enabled ? Slackmine::Formatter.image_references(notes) : [],
-        journal_id: comment_enabled ? id : nil
+        journal_id: id, source: self
       )
     end
 
@@ -78,7 +78,7 @@ module Slackmine
       Slackmine.enqueue(
         payload,
         project: issue.project, event: event,
-        image_names: image_names, journal_id: action == 'updated' ? id : nil
+        image_names: image_names, journal_id: id, source: self
       )
     end
 

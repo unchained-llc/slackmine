@@ -6,6 +6,7 @@ class SlackmineNotificationJob < ApplicationJob
   def perform(payload, project_id, image_names = [], image_source_id = nil, issue_id = nil)
     project = Project.find_by(id: project_id)
     return unless project
+    return unless Slackmine::NotificationSafety.allowed?(payload['_slackmine_delivery_context'], project)
 
     # Accept the short-lived five-argument jobs already queued by the first
     # implementation as well as the four-argument format used now.

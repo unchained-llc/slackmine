@@ -23,7 +23,7 @@ module Slackmine
       Slackmine.enqueue(
         Slackmine::Formatter.issue_payload(self, actor: author, action: 'created'),
         project: self.project, event: 'issue_created',
-        image_names: Slackmine::Formatter.image_references(description), issue_id: id
+        image_names: Slackmine::Formatter.image_references(description), issue_id: id, source: self
       )
     end
 
@@ -32,7 +32,7 @@ module Slackmine
 
       Slackmine.enqueue(
         Slackmine::Formatter.issue_payload(self, actor: User.current, action: 'deleted'),
-        project: self.project, event: 'issue_deleted'
+        project: self.project, event: 'issue_deleted', issue_id: id, source: self
       )
     end
   end
