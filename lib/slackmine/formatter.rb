@@ -6,6 +6,8 @@ require 'yaml'
 module Slackmine
   module Formatter
     AVATAR_MARKER = "\u0000slackmine_avatar\u0000".freeze
+    NOTIFICATION_EVENT_MARKER = "\u0000slackmine_event\u0000".freeze
+    NOTIFICATION_ACTOR_MARKER = "\u0000slackmine_actor\u0000".freeze
     BODY_DIFF_MAX_CHARS = 6_000
     BODY_DIFF_MAX_LINE_CHARS = 400
     BODY_DIFF_CONTEXT_LINES = 2
@@ -285,17 +287,21 @@ module Slackmine
       end
 
       changes = change_fields(issue, visible_issue_changes(details))
+      content_end = blocks.length
       if changes.present?
         blocks << { 'type' => 'divider' }
         blocks << section_text("*#{text(section_label('changes'))}*")
         blocks.concat(change_field_blocks(changes))
       end
 
+      metadata_start = blocks.length
       if %w[created updated].include?(action)
         append_metadata(blocks, 'issue', metadata_fields(issue, actor, action), action: action)
       end
 
       result = payload(title, blocks: blocks, noun: 'Issue', action: action, actor: actor)
+      result = with_notification_parts(result, content_end, metadata_start, issue, details,
+                                      noun: 'Issue', action: action, actor: actor, notes: notes)
       action == 'deleted' ? result : with_issue_work_object(result, issue, actor: actor, action: action)
     end
 
@@ -340,16 +346,21 @@ module Slackmine
                                           blocks: blocks, full_heading: section_label('summary'), diff_kind: :issue_description))
       end
       changes = change_fields(issue, visible_issue_changes(details))
+      content_end = blocks.length
       if changes.present?
         blocks << { 'type' => 'divider' }
         blocks << section_text("*#{text(section_label('changes'))}*")
         blocks.concat(change_field_blocks(changes))
       end
+      metadata_start = blocks.length
       append_metadata(blocks, 'issue', metadata_fields(issue, actor, 'updated'), action: 'updated') if combined_update
-      result = with_issue_work_object(payload(fallback, blocks: blocks,
-                                             noun: combined_update ? 'Issue' : 'Comment',
-                                             action: combined_update ? 'updated' : comment_action, actor: actor),
-                                      issue, actor: actor, action: 'updated')
+      result = payload(fallback, blocks: blocks, noun: combined_update ? 'Issue' : 'Comment',
+                       action: combined_update ? 'updated' : comment_action, actor: actor)
+      result = with_notification_parts(result, content_end, metadata_start, issue, details,
+                                      noun: combined_update ? 'Issue' : 'Comment',
+                                      action: combined_update ? 'updated' : comment_action,
+                                      actor: actor, notes: notes, comment_action: comment_action)
+      result = with_issue_work_object(result, issue, actor: actor, action: 'updated')
       if !combined_update && Slackmine.effective_config.dig('slack', 'comment_notifications_in_threads') == true
         body = comment_action == 'added' ? mrkdwn_sections(nil, notes.to_s) : blocks.drop(3)
         header_key = "#{comment_action}_header"
@@ -363,6 +374,11 @@ module Slackmine
           'attachments' => [{ 'fallback' => notes.to_s, 'blocks' => body }],
           'unfurl_links' => false, 'unfurl_media' => false
         }
+        if result.key?('_slackmine_notification_changes')
+          thread = result['_slackmine_thread_comment_payload']
+          thread['_slackmine_notification_changes'] = []
+          thread['attachments'][0]['blocks'] = body.map { |block| block.merge('_slackmine_part' => 'body') }
+        end
       end
       result
     end
@@ -497,7 +513,9 @@ module Slackmine
               candidates = [mrkdwn_sections(section_label(heading), notes)]
               candidates << [section_text("*#{text(section_label(heading))}*\n> #{mrkdwn(notes).gsub("\n", "\n> ")}")]
               candidates.each do |candidate|
-                index = source_blocks.each_index.find { |i| source_blocks[i, candidate.length] == candidate }
+                index = source_blocks.each_index.find do |i|
+                  source_blocks[i, candidate.length].map { |block| block.reject { |key, _| key == '_slackmine_part' } } == candidate
+                end
                 source_blocks.slice!(index, candidate.length) if index
               end
             end
@@ -639,10 +657,10 @@ module Slackmine
                   fallback: DEFAULT_MESSAGES.dig('templates', 'event_fallback'))
     end
 
-    def notification_heading(noun, action, actor, project:, subject:, id: nil, avatar: '')
+    def notification_heading(noun, action, actor, project:, subject:, id: nil, avatar: '', event: nil, actor_name: nil)
       key = event_key(noun)
-      values = { actor: text(actor&.name || message('values', 'unknown_user')),
-                 event: text(event_label(noun, action)), icon: event_icon(action, noun: noun),
+      values = { actor: actor_name || text(actor&.name || message('values', 'unknown_user')),
+                 event: event || text(event_label(noun, action)), icon: event_icon(action, noun: noun),
                  project: text(project.name), subject: text(subject), id: id,
                  product_name: text(raw_message('work_objects', 'product_name')),
                  noun: text(noun), action: text(action), avatar: avatar }
@@ -984,10 +1002,17 @@ module Slackmine
     end
 
     def change_fields(issue, details)
+      notification_change_entries(issue, details).map { |entry| [entry['label'], entry['value']] }
+    end
+
+    # Keep field identity and transition endpoints separate from translated
+    # labels/rendered arrows so coalescing never has to parse display text.
+    def notification_change_entries(issue, details)
       public_changes(details).each_with_object([]) do |detail, changes|
         label = detail_label(detail)
         next unless label
 
+        from = to = nil
         value = if detail.property == 'relation'
                   relation_id = detail.value.presence || detail.old_value
                   action = message('values', detail.value.present? ? 'added' : 'removed')
@@ -1001,12 +1026,59 @@ module Slackmine
                 elsif detail.property == 'attr' && detail.prop_key == 'description'
                   next
                 elsif detail.property == 'attr' && %w[parent_id child_id].include?(detail.prop_key)
-                  "#{issue_reference(detail.old_value, project: issue&.project)} → #{issue_reference(detail.value, project: issue&.project)}"
+                  from = issue_reference(detail.old_value, project: issue&.project)
+                  to = issue_reference(detail.value, project: issue&.project)
+                  "#{from} → #{to}"
                 else
-                  "#{detail_old_value(detail, issue: issue)} → #{detail_new_value(issue, detail)}"
+                  from = detail_old_value(detail, issue: issue)
+                  to = detail_new_value(issue, detail)
+                  "#{from} → #{to}"
                 end
-        changes << [label, value]
+        entry = { 'key' => [detail.property, detail.prop_key], 'label' => label, 'value' => value }
+        entry['values'] = [from, to] unless from.nil?
+        changes << entry
       end
+    end
+
+    def with_notification_parts(result, content_end, metadata_start, issue, details,
+                                noun:, action:, actor:, notes:, comment_action: 'added')
+      return result unless NotificationCoalescing.window_seconds.positive?
+
+      attachment = result.fetch('attachments').first
+      attachment['blocks'] = attachment.fetch('blocks').each_with_index.map do |block, index|
+        role = if index < 2 then 'header'
+               elsif index >= metadata_start then 'metadata'
+               elsif index >= content_end then 'changes'
+               else 'body'
+               end
+        block.merge('_slackmine_part' => role)
+      end
+      visible_details = visible_issue_changes(details)
+      events = []
+      events << event_label('Issue', action) if noun == 'Issue' && action != 'updated'
+      if noun == 'Comment' || notes.to_s.strip.present?
+        events << event_label('Comment', comment_action)
+      end
+      if action == 'updated' && noun == 'Issue'
+        visible_details.each do |detail|
+          label = detail_label(detail)
+          next unless label
+
+          events << interpolate(message('templates', 'issue_field_changed'), { field: label },
+                                fallback: DEFAULT_MESSAGES.dig('templates', 'issue_field_changed'))
+        end
+      end
+      events << event_label(noun, action) if events.empty?
+      result.merge(
+        '_slackmine_notification_changes' => notification_change_entries(issue, visible_details),
+        '_slackmine_notification_heading' => {
+          'events' => events.uniq,
+          'actors' => [actor&.name || message('values', 'unknown_user')],
+          'template' => notification_heading(noun, action, actor, project: issue.project,
+            subject: issue.subject, id: issue.id, avatar: AVATAR_MARKER, event: NOTIFICATION_EVENT_MARKER,
+            actor_name: NOTIFICATION_ACTOR_MARKER)
+        }
+      )
     end
 
     def change_field_blocks(changes)

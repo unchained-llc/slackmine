@@ -476,10 +476,12 @@ module Slackmine
       context = payload.delete('_slackmine_delivery_context')
       return if context && !NotificationSafety.allowed?(context, project)
       actor_id = payload.delete('_slackmine_actor_id')
+      notification_actor_id = actor_id
       avatar_parts = payload.delete('_slackmine_avatar_parts')
       comment_issue_id = payload.delete('_slackmine_comment_issue_id')
       thread_payload = payload.delete('_slackmine_thread_comment_payload')
-      if comment_issue_id && effective_config.dig('slack', 'comment_notifications_in_threads') == true
+      if comment_issue_id && NotificationCoalescing.window_seconds.zero? &&
+         effective_config.dig('slack', 'comment_notifications_in_threads') == true
         thread_ts = CommentThreads.latest_thread(comment_issue_id, channel, token)
         if thread_ts
           payload = thread_payload if thread_payload.is_a?(Hash)
@@ -492,7 +494,10 @@ module Slackmine
       add_images(payload, image_names, journal_id, token, issue_id: issue_id) if image_names.present? && (journal_id || issue_id)
       # Profile/file API calls can take time; recheck after them as well.
       return if context && !NotificationSafety.allowed?(context, project)
-      post_message(payload, channel, token)
+      notification_parts = NotificationCoalescing.extract_parts!(payload)
+      NotificationCoalescing.deliver(payload, project: project, context: context,
+                                     actor_id: notification_actor_id, channel: channel, token: token,
+                                     parts: notification_parts)
     end
   rescue StandardError => e
     Rails.logger.error("Slackmine: #{e.class}: #{e.message}")
@@ -529,6 +534,7 @@ module Slackmine
     end
     blocks = payload.dig('attachments', 0, 'blocks').dup
     blocks[0] = { 'type' => 'context', 'elements' => elements }
+    blocks[0]['_slackmine_part'] = heading['_slackmine_part'] if heading.key?('_slackmine_part')
     attachments = payload['attachments'].dup
     attachments[0] = attachments[0].merge('blocks' => blocks)
     payload.merge('attachments' => attachments)
@@ -538,11 +544,16 @@ module Slackmine
     payload
   end
 
-  def post_message(payload, channel, token)
-    image_ids = Array(payload.dig('attachments', 0, 'blocks')).each_with_object([]) do |block, ids|
+  def post_message(payload, channel, token, ts: nil)
+    image_ids = Array(payload['attachments']).flat_map { |attachment| Array(attachment['blocks']) }.each_with_object([]) do |block, ids|
       ids << block.dig('slack_file', 'id') if block['type'] == 'image'
     end.compact.uniq
     request = payload.merge('channel' => channel)
+    if ts
+      request.delete('thread_ts') # chat.update identifies replies by their own ts.
+      request.merge!('ts' => ts, 'text' => payload.fetch('text', ''),
+                     'blocks' => payload.fetch('blocks', []), 'metadata' => payload.fetch('metadata', {}))
+    end
     request.merge!('unfurl_links' => false, 'unfurl_media' => false) if files_transfer_restricted?
     if image_ids.any?
       summary = payload['text'].to_s
@@ -560,7 +571,7 @@ module Slackmine
       end
     end
 
-    posted = post_with_image_retry(request, token)
+    posted = post_with_image_retry(request, token, method: ts ? 'chat.update' : 'chat.postMessage')
     return posted if image_ids.empty?
 
     begin
@@ -606,7 +617,7 @@ module Slackmine
       result
     rescue SlackApiError => e
       image_message = Array(request['blocks']).any? { |block| block['type'] == 'image' || block.dig('accessory', 'slack_file', 'id') } ||
-        Array(request.dig('attachments', 0, 'blocks')).any? { |block| block['type'] == 'image' }
+        Array(request['attachments']).any? { |attachment| Array(attachment['blocks']).any? { |block| block['type'] == 'image' } }
       raise unless image_message && e.unready_image_file? && retries < 3
 
       sleep([1, 2, 4][retries])
@@ -753,6 +764,7 @@ require_relative 'slackmine/channel_matching'
 require_relative 'slackmine/admin_overview'
 require_relative 'slackmine/job_monitor'
 require_relative 'slackmine/notification_safety'
+require_relative 'slackmine/notification_coalescing'
 require_relative 'slackmine/mail_preference'
 
 

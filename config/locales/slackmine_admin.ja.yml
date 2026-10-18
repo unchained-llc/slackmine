@@ -73,6 +73,8 @@ ja:
     slack_thread_comment_batch_max_wait_seconds: "返信をまとめる最大待ち時間（秒）です。最初の返信から数え、省略時は300秒です。"
     slack_thread_comment_feedback_cleanup_seconds: "Botの取り込み結果通知を消すまでの秒数です。-1で保持、0で通知しない、正の数で遅延削除します。元の返信やコメントは残ります。"
     slack_app_home: "SlackアプリのHomeタブに個人向けの未完了チケット一覧を表示します。共通アプリの設定を使います。"
+    slack_notification_coalescing_enabled: "trueで通知を投稿の編集により集約します。falseまたは省略時は集約しません。"
+    slack_notification_coalescing_seconds: "最初の投稿から集約する秒数です。既定は5分（300秒）。1〜300の整数を指定でき、省略・不正な値は300秒。編集による延長や配信待ちはありません。"
     slack_comment_notifications_in_threads: "コメントのみの変更を直近のチケット通知スレッドに投稿します。通知先スレッドが見つからない場合は通常の通知に戻ります。"
     slack_events_app_id: "SlackアプリIDです。受信イベントが対象のアプリから届いたことの確認に使います。"
     slack_events_team_id: "SlackワークスペースIDです。受信イベントのワークスペース確認に使います。"

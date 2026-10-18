@@ -18,6 +18,7 @@ module Slackmine
       'slack.thread_connections' => true, 'slack.suppress_thread_comment_notifications' => true,
       'slack.thread_comment_batch.wait_seconds' => 0, 'slack.thread_comment_batch.max_wait_seconds' => 300,
       'slack.thread_comment_feedback_cleanup_seconds' => -1, 'slack.app_home' => false,
+      'slack.notification_coalescing.enabled' => false, 'slack.notification_coalescing.seconds' => 300,
       'slack.comment_notifications_in_threads' => false, 'slack.events.app_id' => nil,
       'slack.events.team_id' => nil, 'slack.events.signing_secret' => nil,
       'slack.body_diff' => true, 'slack.attachment_color' => '#6D5DFB',
@@ -115,6 +116,7 @@ module Slackmine
       slack.thread_comments slack.thread_connections slack.suppress_thread_comment_notifications
       slack.thread_comment_batch.wait_seconds slack.thread_comment_batch.max_wait_seconds
       slack.thread_comment_feedback_cleanup_seconds slack.app_home slack.comment_notifications_in_threads
+      slack.notification_coalescing.enabled slack.notification_coalescing.seconds
       slack.events.app_id slack.events.team_id slack.events.signing_secret
       slack.body_diff slack.attachment_color slack.issue_changes_when_hidden
       due_reminders.enabled due_reminders.days due_reminders.colors.overdue

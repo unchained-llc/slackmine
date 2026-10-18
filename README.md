@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.6.0**.
+Version **1.7.0**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -17,7 +17,7 @@ The plugin provides notifications, Work Object actions, and optional slash comma
 | Feature | What it does |
 | --- | --- |
 | [Redmine event notifications](#event-switches) | Notify Slack about Issue creation, changes, comments, and deletion, plus Wiki, News, time entry, Version, and Project events. Enable or disable individual events globally or per project. |
-| [Notification formatting](#notification-content) | Choose metadata, colors, and wording; show body diffs and inline Issue images; mention mapped assignees. |
+| [Notification formatting](#notification-content) | Choose metadata, colors, and wording; show body diffs and inline Issue images; mention mapped assignees; [coalesce consecutive notifications by editing the original post](#coalesce-notifications-by-editing-the-original-post). |
 | [Project channel routing](#inherit-a-parent-project-channel) | Use an explicit channel or an optional unique name match, then try parent projects from nearest to farthest, and finally the default channel. Configure separate Slack apps/tokens per project when needed. |
 | [Issue Work Object previews](#ticket-work-object-previews) | Display Issue cards and details inside Slack, with configurable fields and current data fetched when details open. |
 | [Issue actions in Slack](#work-object-card-and-detail-actions) | Edit permitted status, assignee, priority, and due date; add comments; assign to yourself; start/complete work; watch/unwatch. The time-entry action opens the Redmine form. |
@@ -602,6 +602,21 @@ Routing checks each project from child to root: explicit `slack.default_channel_
 The plugin uses [`users.conversations`](https://docs.slack.dev/reference/methods/users.conversations/) to list only channels the Bot belongs to. Add [`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/) for public channels and [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/) for private channels, then reinstall the app. These are separate from the [`*:history`](https://docs.slack.dev/reference/scopes/) scopes used for threaded notifications. Archived channels and DMs are excluded. Listings are cached by Bot Token in process memory for ten minutes; no DB, Redis, file storage, or Rails cache is used. Rename/membership changes can take up to ten minutes to be reflected; restarting workers clears their caches. Listing is bounded to ten pages of 200 channels; incomplete or failed listings are not used for matching. Each worker has its own cache.
 
 Automatic routing also applies to comment notification threads and Slack-to-Redmine thread replies. Projects do not need YAML entries to participate when the global switch is enabled; existing reply permissions and explicit user mappings or enabled email matching still apply.
+
+### Coalesce notifications by editing the original post
+
+The first notification is posted immediately. Subsequent notifications for the same Issue and destination are merged into that post using [Slack `chat.update`](https://docs.slack.dev/reference/methods/chat.update/), regardless of the updater or number of changes. One heading and one changes section are shown. Repeated changes to the same field form a history such as `Closed → Assigned → In progress → Closed`. Comment bodies and images are retained; Work Object metadata and supplementary fields come from the latest notification. When multiple people contribute, the heading lists them and comment bodies identify their authors. Issue creation, field changes, comments and deletion notifications are eligible.
+
+```yaml
+slack:
+  notification_coalescing:
+    enabled: true
+    seconds: 300
+```
+
+Set `enabled: true` to enable; `false` or omitted disables. The default window is 5 minutes (300 seconds). Optional `seconds` accepts positive integers, capped at 300; missing or invalid values use 300. Override both settings under `projects.<identifier>.slack.notification_coalescing`. The window starts at the first post and never extends. Within this window, all subsequent notifications edit that post; there is no five-notification limit. Distinct explicit destination threads retain separate groups. Coalescing takes precedence over automatic threaded comment notifications. If the combined content exceeds 45 blocks, 5 attachments, 3,000 characters per heading/text block, 2,000 characters per field or 24KB, older content is shortened inside the same post with a link to the full Issue history. Override `messages.notification_coalescing.history` to customize that link text.
+
+The existing `Rails.cache` briefly stores the destination, Issue, source notification content and permission-check contexts. Use a shared cache with atomic `unless_exist` support across workers and keep entries for the entire window; cache eviction loses the original post mapping. Concurrent jobs wait for the same group lock. Cache failures and persistent lock contention raise an error for job retry instead of posting duplicates. Only a deleted or uneditable Slack message requires a replacement post. Before each edit, retained comments, field visibility, destination and event settings are rechecked; changed/private/deleted source content is removed while retaining the original Slack post ID. No additional scopes, database tables or scheduled tasks are needed. Restart Redmine and workers after changing YAML.
 
 ### Threaded Redmine comment notifications
 
@@ -1310,6 +1325,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.0** | Add opt-in notification coalescing for the same Issue and destination, regardless of updater or update count. Post immediately, then edit the original message within a default five-minute window. Toggle with `notification_coalescing.enabled`; merge field histories, preserve comments/images, and recheck source visibility before edits. |
 | **1.6.0** | Strengthened Slack integration security. Quote imports verify channel membership for both the user and bot. Notifications exclude private information and recheck access before sending. Added quote tampering detection, independent signing and verification switches, a legacy quote signing task, and stronger permission checks for DM searches. |
 | **1.5.9** | Fix email-matched Work Object identities and notification avatars. Cache outgoing email matching through paginated user listings to avoid per-user API requests, show the winning match method in the admin overview, and prioritize automatic name/email matching by YAML declaration order. |
 | **1.5.8** | Match Slack channel names to Redmine project identifiers, including ancestor projects. |

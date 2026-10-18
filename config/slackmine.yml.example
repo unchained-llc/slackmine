@@ -158,6 +158,17 @@ slack:
   # Requires slack.events.app_id and groups:history / channels:history.
   # Search is bounded to 3 pages of up to 100 channel messages each.
   comment_notifications_in_threads: false
+  # Immediately post the first Issue notification, then merge subsequent
+  # changes for the same Issue/destination by editing that message.
+  # Show one heading and changes section; repeated fields form a value history.
+  # enabled: true opts in; false or omitted keeps separate notifications.
+  # The fixed window defaults to 5 minutes (300s). Optional seconds: 1..300.
+  # Uses Rails.cache; multiple workers need a shared cache with atomic
+  # unless_exist support. No additional Slack scopes needed.
+  # Both settings can be overridden under projects.<identifier>.slack.
+  notification_coalescing:
+    enabled: true
+    seconds: 300
   # Required for clickable Work Object details. Configure the Slack app's
   # Events Request URL as https://redmine.example.com/slackmine/events and subscribe
   # to entity_details_requested. Work Object unfurl refresh additionally requires

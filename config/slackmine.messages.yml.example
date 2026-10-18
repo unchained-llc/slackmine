@@ -88,6 +88,8 @@ messages:
     cancel: Cancel
     edit_failed: 'Could not update issue #%{id}. Check your permissions and the current state.'
     operation_failed: Could not perform this action. Check your permissions and the current state.
+  notification_coalescing:
+    history: 'Earlier updates and full history: <%{url}|#%{id}>'
   thread_notifications:
     added_header: "%{actor} · %{product_name} #%{id}: New comment"
     updated_header: "%{actor} · %{product_name} #%{id}: Comment updated"
@@ -270,6 +272,7 @@ messages:
     event_fallback: "%{noun} %{action}"
     relation_fallback: "%{type}"
     issue_updated_header: "%{actor} *%{event}*"
+    issue_field_changed: "%{field} changed"
     issue_fallback: "[%{project}] %{actor} %{action} %{tracker} #%{id}: %{subject}"
     journal_fallback: "[%{project}] %{actor} %{event} %{tracker} #%{id}: %{subject}"
     generic_fallback: "%{event} - %{subject}"

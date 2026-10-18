@@ -73,6 +73,8 @@ en:
     slack_thread_comment_batch_max_wait_seconds: "Maximum batch wait in seconds from the first reply. Defaults to 300 when omitted."
     slack_thread_comment_feedback_cleanup_seconds: "Seconds before deleting Bot import feedback: -1 keeps it, 0 suppresses it, positive values schedule deletion. Original replies and comments remain."
     slack_app_home: "Show personal open-issue lists in the Slack Home tab using the shared app configuration."
+    slack_notification_coalescing_enabled: "Enable notification coalescing by editing the original post. False or omitted keeps separate notifications."
+    slack_notification_coalescing_seconds: "Fixed window from the first post, defaulting to 5 minutes (300 seconds). Positive integer seconds are capped at 300; missing or invalid values use 300. No delivery delay or extension."
     slack_comment_notifications_in_threads: "Post comment-only changes to the latest issue notification thread; fall back to a regular notification when no thread is found."
     slack_events_app_id: "Slack app ID used to identify incoming events for this integration."
     slack_events_team_id: "Slack workspace ID used to identify incoming events for this integration."
