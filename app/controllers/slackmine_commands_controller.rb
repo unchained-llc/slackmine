@@ -24,6 +24,9 @@ class SlackmineCommandsController < ActionController::Base
     return head :forbidden unless expected.to_s.start_with?('/') && payload['command'] == expected
     return head :bad_request unless payload['user_id'].to_s.match?(/\A[UW][A-Z0-9]+\z/) && payload['channel_id'].to_s.match?(/\A[CDG][A-Z0-9]+\z/) && payload['text'].to_s.length <= 1000
     command = payload.slice('user_id', 'channel_id', 'text')
+    if Slackmine::SlashCommands.response_uri(payload['response_url'])
+      command['response_url'] = payload['response_url']
+    end
     if Slackmine::SlashCommands.direct_arguments(payload['text'])
       command['request_key'] = Digest::SHA256.hexdigest([request.headers['X-Slack-Request-Timestamp'], body].join(':'))
     end

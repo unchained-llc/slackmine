@@ -48,6 +48,10 @@ module Slackmine
       viewer = WorkObjects.viewer_for(user_id)
       return [section(message('denied'))] unless viewer
       command, argument = text.to_s.strip.split(/\s+/, 2)
+      if command && !%w[help new my due search status assign comment reminders].include?(command) &&
+         !command.match?(/\A#?[1-9]\d*\z/)
+        command, argument = 'search', text.to_s.strip
+      end
       case command
       when nil, '', 'help'
         [section(message('help')), { 'type' => 'actions', 'elements' => %w[my due reminders new].map { |key| button(message(key), key) } }]
@@ -113,9 +117,40 @@ module Slackmine
                  run(app, team, payload['user_id'], payload['channel_id'], text) { |issue| single_issue_payload(issue) }
                end
       result = { 'text' => message('results'), 'blocks' => result } if result.is_a?(Array)
-      Slackmine.slack_api('chat.postEphemeral', result.merge(
-        'channel' => payload['channel_id'], 'user' => payload['user_id']
-      ), Slackmine.bot_token)
+      respond(payload, result)
+    end
+
+    def response_uri(url)
+      return unless url.is_a?(String) && url.bytesize <= 2048
+
+      uri = URI.parse(url)
+      return unless uri.is_a?(URI::HTTPS) && %w[hooks.slack.com hooks.slack-gov.com].include?(uri.host) &&
+                    uri.port == 443 && !uri.userinfo && !uri.query && !uri.fragment &&
+                    uri.path.match?(%r{\A/commands/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+\z})
+
+      uri
+    rescue URI::InvalidURIError
+      nil
+    end
+
+    def respond(payload, result)
+      uri = response_uri(payload['response_url'])
+      unless uri
+        return Slackmine.slack_api('chat.postEphemeral', result.merge(
+          'channel' => payload['channel_id'], 'user' => payload['user_id']
+        ), Slackmine.bot_token)
+      end
+
+      request = Net::HTTP::Post.new(uri.request_uri)
+      request['Content-Type'] = 'application/json; charset=utf-8'
+      request.body = result.merge('response_type' => 'ephemeral', 'replace_original' => false).to_json
+      Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 3, read_timeout: 10) do |http|
+        response = http.request(request)
+        # Slack webhooks return plain "ok", unlike Web API's JSON envelope.
+        unless response.is_a?(Net::HTTPSuccess) && response.body.to_s.strip == 'ok'
+          raise Slackmine::SlackApiError.new('response_url', response.code, { 'error' => 'response_failed' })
+        end
+      end
     end
 
     def direct_arguments(text)
@@ -201,9 +236,8 @@ module Slackmine
     def deliver_reminders(app, team, payload)
       viewer = WorkObjects.viewer_for(payload['user_id'])
       token = Slackmine.bot_token
-      recipient = { 'channel' => payload['channel_id'], 'user' => payload['user_id'] }
       unless viewer
-        return Slackmine.slack_api('chat.postEphemeral', recipient.merge('text' => message('denied')), token)
+        return respond(payload, { 'text' => message('denied') })
       end
 
       today = Date.current
@@ -212,7 +246,7 @@ module Slackmine
         authorized_project?(issue.project, app, team)
       end.sort_by { |issue| [issue.due_date, issue.project.name, issue.id] }
       if issues.empty?
-        return Slackmine.slack_api('chat.postEphemeral', recipient.merge('text' => message('reminders_empty')), token)
+        return respond(payload, { 'text' => message('reminders_empty') })
       end
 
       size = SlackmineDueDigestJob::MAX_ISSUES_PER_MESSAGE
@@ -222,7 +256,7 @@ module Slackmine
           Formatter.due_digest_payload(batch, today: today, part: index + 1,
                                       total_parts: (issues.size + size - 1) / size)
         end
-        Slackmine.slack_api('chat.postEphemeral', digest.merge(recipient), token)
+        respond(payload, digest)
       end
     end
 

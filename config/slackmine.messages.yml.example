@@ -34,7 +34,7 @@ messages:
       • `%{command} my` — Your assigned open issues (up to 10).
       • `%{command} due` — Your overdue issues and issues due within 3 days (up to 10).
       • `%{command} reminders` — Your personal due-reminder digest, using the configured reminder window. No day argument.
-      • `%{command} search words` — Search issue subjects (up to 10).
+      • `%{command} words` or `%{command} search words` — Search issue subjects (up to 10).
       • `%{command} 123` — Show one issue; automatically use a card when Work Object previews are configured.
       • `%{command} new [project-identifier]` — Choose a project and open the issue creation form.
       • `%{command} comment 123` — Open the comment form from the returned button. Enter the comment in the form.

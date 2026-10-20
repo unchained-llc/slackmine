@@ -47,6 +47,81 @@ class SlashCommandsTest < Minitest::Test
     assert_equal :service_unavailable, dispatch(enqueue: ->(*) { raise Timeout::Error }).status
   end
 
+  def test_signed_command_preserves_only_valid_slack_response_url
+    @payload['response_url'] = 'https://hooks.slack.com/commands/TTEST/123/secret'
+    assert_equal :ok, dispatch.status
+    assert_equal @payload['response_url'], @delivered.first.last['response_url']
+    refute @delivered.first.last.key?('token')
+    assert_equal :unauthorized, dispatch(signature: 'v0=' + '0' * 64).status
+    assert_empty @delivered
+  end
+
+  def test_response_url_validation_rejects_external_hosts_and_redirect_tricks
+    %w[http://hooks.slack.com/commands/T/1/secret
+       https://hooks.slack.com.evil.example/commands/T/1/secret
+       https://hooks.slack.com@evil.example/commands/T/1/secret
+       https://hooks.slack.com:444/commands/T/1/secret
+       https://hooks.slack.com/services/T/1/secret
+       https://hooks.slack.com/commands/T/1/secret?redirect=1
+       https://hooks.slack.com/commands/T/1/secret#fragment].each do |url|
+      assert_nil COMMANDS.response_uri(url), url
+    end
+    assert COMMANDS.response_uri('https://hooks.slack-gov.com/commands/T/1/secret')
+  end
+
+  def test_command_in_another_apps_dm_uses_ephemeral_response_url_without_bot_token
+    @payload.merge!('channel_id' => 'DOTHERAPP', 'response_url' => 'https://hooks.slack.com/commands/TTEST/123/secret')
+    request = nil
+    http = Object.new
+    http.define_singleton_method(:request) do |value|
+      request = value
+      Net::HTTPOK.new('1.1', '200', 'OK').tap { |response| response.define_singleton_method(:body) { 'ok' } }
+    end
+    Slackmine.stub(:config, @settings) do
+      COMMANDS.stub(:run, ->(*) { { 'text' => 'Example', 'blocks' => [COMMANDS.section('Example')], 'attachments' => [] } }) do
+        Slackmine.stub(:slack_api, ->(*) { flunk 'DM must use command response URL' }) do
+          Net::HTTP.stub(:start, ->(host, port, **options, &block) {
+            assert_equal 'hooks.slack.com', host
+            assert_equal 443, port
+            assert_equal true, options[:use_ssl]
+            block.call(http)
+          }) { COMMANDS.deliver('ATEST', 'TTEST', @payload) }
+        end
+      end
+    end
+    assert_nil request['Authorization']
+    body = JSON.parse(request.body)
+    assert_equal 'ephemeral', body['response_type']
+    assert_equal false, body['replace_original']
+    assert_equal 'Example', body['text']
+    assert_equal 1, body['blocks'].length
+    assert_equal [], body['attachments']
+    refute body.key?('channel')
+    refute body.key?('user')
+  end
+
+  def test_failed_response_url_does_not_follow_redirect_or_expose_url
+    @payload['response_url'] = 'https://hooks.slack.com/commands/TTEST/123/secret'
+    http = Object.new
+    http.define_singleton_method(:request) { |*| Net::HTTPFound.new('1.1', '302', 'Found') }
+    Net::HTTP.stub(:start, ->(*args, **options, &block) { block.call(http) }) do
+      error = assert_raises(Slackmine::SlackApiError) { COMMANDS.respond(@payload, { 'text' => 'Example' }) }
+      refute_includes error.message, 'secret'
+      assert_equal 'response_failed', error.code
+    end
+  end
+
+  def test_reminders_use_the_same_command_response_path
+    sent = []
+    Slackmine::WorkObjects.stub(:viewer_for, nil) do
+      COMMANDS.stub(:respond, ->(*args) { sent << args }) do
+        COMMANDS.deliver_reminders('ATEST', 'TTEST', @payload)
+      end
+    end
+    assert_same @payload, sent.first[0]
+    assert_includes sent.first[1]['text'], 'Not available'
+  end
+
   def test_direct_edit_uses_configured_command_and_a_server_derived_retry_key
     @settings['slack']['slash_command'] = '/tickets'
     @payload.merge!('command' => '/tickets', 'text' => 'status 7 終了', 'trigger_id' => 'fresh-trigger',
@@ -153,6 +228,34 @@ class SlashCommandsTest < Minitest::Test
             refute_includes blocks.to_json, 'slackmine_command_run'
           end
         end
+      end
+    end
+  ensure
+    Issue.singleton_class.remove_method(:visible) if added_visible
+    Issue.singleton_class.remove_method(:sanitize_sql_like) if added_sanitize
+  end
+
+  def test_plain_text_defaults_to_search_with_the_entire_query
+    queries = []
+    scope = Object.new
+    scope.define_singleton_method(:where) { |*args| queries << args; self }
+    [:order, :limit].each { |method| scope.define_singleton_method(method) { |*| self } }
+    scope.define_singleton_method(:to_a) { [] }
+    added_visible = !Issue.respond_to?(:visible)
+    added_sanitize = !Issue.respond_to?(:sanitize_sql_like)
+    Issue.define_singleton_method(:visible) { |_| scope } if added_visible
+    Issue.define_singleton_method(:sanitize_sql_like) { |value| value.gsub('%', '\\%').gsub('_', '\\_') } if added_sanitize
+    Slackmine::WorkObjects.stub(:viewer_for, Object.new) do
+      Issue.stub(:visible, scope) do
+        ['spdf', '  SDPF 移行  ', 'search spdf', '移行 100%_完了'].each do |text|
+          COMMANDS.run('ATEST', 'TTEST', 'U123', 'C123', text)
+        end
+        assert_equal ['%spdf%', '%sdpf 移行%', '%spdf%', '%移行 100\\%\\_完了%'], queries.map(&:last)
+        assert queries.all? { |query| query.first == 'LOWER(issues.subject) LIKE ?' }
+        ['', '   ', 'help', 'search'].each do |text|
+          assert_includes COMMANDS.run('ATEST', 'TTEST', 'U123', 'C123', text).to_json, 'Issue commands'
+        end
+        assert_equal 4, queries.length
       end
     end
   ensure

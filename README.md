@@ -1035,7 +1035,7 @@ No additional database tables or migrations are needed. Form-submission and expl
 | `/slackmine my` | Your directly assigned, open issues |
 | `/slackmine due` | Your overdue issues and issues due within three days |
 | `/slackmine reminders` | Run your personal due-reminder digest now, using the scheduled reminder settings |
-| `/slackmine search words` | Case-insensitive subject search |
+| `/slackmine words` or `/slackmine search words` | Case-insensitive subject search |
 | `/slackmine new [project-identifier]` | Project selection followed by a tracker, subject, and description modal |
 | `/slackmine comment 123` | Button that opens the comment modal |
 | `/slackmine status 123 [status name or ID]` | Queue a status change, or omit the value for a permitted-status picker |
@@ -1325,6 +1325,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.1** | Fixed slash command replies in DMs and channels inaccessible to the bot by using Slack's response URL. Plain keywords now search issue subjects; an empty command still shows help. |
 | **1.7.0** | Add opt-in notification coalescing for the same Issue and destination, regardless of updater or update count. Post immediately, then edit the original message within a default five-minute window. Toggle with `notification_coalescing.enabled`; merge field histories, preserve comments/images, and recheck source visibility before edits. |
 | **1.6.0** | Strengthened Slack integration security. Quote imports verify channel membership for both the user and bot. Notifications exclude private information and recheck access before sending. Added quote tampering detection, independent signing and verification switches, a legacy quote signing task, and stronger permission checks for DM searches. |
 | **1.5.9** | Fix email-matched Work Object identities and notification avatars. Cache outgoing email matching through paginated user listings to avoid per-user API requests, show the winning match method in the admin overview, and prioritize automatic name/email matching by YAML declaration order. |
