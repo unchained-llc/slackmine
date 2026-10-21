@@ -1689,10 +1689,34 @@ class ImageNotificationTest < Minitest::Test
     issue = OpenStruct.new(fixed_version: OpenStruct.new(name: '新版'))
     changes = Slackmine::Formatter.change_fields(issue, details)
     assert_equal ['Attachment', 'Attachment', 'Parent issue', 'Target version', '顧客分類'], changes.map(&:first)
-    assert_equal ['Added: one.png', 'Added: two.png'], changes.first(2).map(&:last)
+    assert_equal ['Added: <https://redmine.example.com/attachments/1|one.png>',
+                  'Added: <https://redmine.example.com/attachments/2|two.png>'], changes.first(2).map(&:last)
     assert_equal 'None → <https://redmine.example.com/issues/7011|#7011>', changes[2][1]
     assert_equal '旧版 → 新版', changes[3][1]
     assert_equal 'A → B', changes[4][1]
+  end
+
+  def test_attachment_changes_link_added_files_and_keep_deleted_files_as_text
+    filename = '請求書 & <確認>|2026.pdf'
+    details = [
+      OpenStruct.new(property: 'attachment', prop_key: '23439', old_value: '', value: filename),
+      OpenStruct.new(property: 'attachment', prop_key: '23440', old_value: filename, value: '')
+    ]
+    changes = Slackmine::Formatter.change_fields(nil, details)
+    assert_equal 'Added: <https://redmine.example.com/attachments/23439|請求書 &amp; &lt;確認&gt;&#124;2026.pdf>', changes[0][1]
+    assert_equal 'Removed: 請求書 &amp; &lt;確認&gt;|2026.pdf', changes[1][1]
+  end
+
+  def test_issue_attachment_metadata_links_each_file
+    issue = OpenStruct.new(project: OpenStruct.new(name: 'Example'), attachments: [
+      OpenStruct.new(id: 23439, filename: 'paymentdetails.pdf'),
+      OpenStruct.new(id: 23440, filename: '確認.png')
+    ])
+    fields = Slackmine.stub(:config, { 'slack' => { 'metadata' => { 'issue' => { 'attachments' => true } } } }) do
+      Slackmine::Formatter.metadata_fields(issue, nil, 'updated')
+    end
+    assert_equal '<https://redmine.example.com/attachments/23439|paymentdetails.pdf>, <https://redmine.example.com/attachments/23440|確認.png>',
+                 fields.assoc('attachments')[1]
   end
 
   def test_long_ordered_list_keeps_the_existing_section_format

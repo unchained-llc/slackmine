@@ -119,6 +119,13 @@ module Slackmine
       base.empty? ? path : "#{base}#{path}"
     end
 
+    def attachment_link(id, filename)
+      label = text(filename)
+      return label unless id.to_s.match?(/\A[1-9]\d*\z/)
+
+      "<#{url("/attachments/#{id}")}|#{label.gsub('|', '&#124;')}>"
+    end
+
     def user_mention(user)
       return message('values', 'unknown_user') if user.nil?
 
@@ -891,7 +898,7 @@ module Slackmine
         'parent_issue' => -> { issue.parent && issue_link(issue.parent, project: issue.project) },
         'children' => -> { issue_list(issue.children, project: issue.project) },
         'relations' => -> { issue_relations(issue) },
-        'attachments' => -> { issue.attachments.map { |attachment| text(attachment.filename) }.join(', ') },
+        'attachments' => -> { issue.attachments.map { |attachment| attachment_link(attachment.id, attachment.filename) }.join(', ') },
         'watchers' => -> { issue.visible_watcher_users.map { |watcher| text(watcher.name) }.join(', ') }
       }
       optional.each do |key, getter|
@@ -1022,7 +1029,8 @@ module Slackmine
                 elsif detail.property == 'attachment'
                   action = message('values', detail.value.present? ? 'added' : 'removed')
                   filename = detail.value.presence || detail.old_value
-                  "#{action}: #{text(filename)}"
+                  file = detail.value.present? ? attachment_link(detail.prop_key, filename) : text(filename)
+                  "#{action}: #{file}"
                 elsif detail.property == 'attr' && detail.prop_key == 'description'
                   next
                 elsif detail.property == 'attr' && %w[parent_id child_id].include?(detail.prop_key)

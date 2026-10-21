@@ -1325,6 +1325,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.2** | Link added attachment filenames and issue attachment metadata to their Redmine attachment pages in Slack notifications. |
 | **1.7.1** | Fixed slash command replies in DMs and channels inaccessible to the bot by using Slack's response URL. Plain keywords now search issue subjects; an empty command still shows help. |
 | **1.7.0** | Add opt-in notification coalescing for the same Issue and destination, regardless of updater or update count. Post immediately, then edit the original message within a default five-minute window. Toggle with `notification_coalescing.enabled`; merge field histories, preserve comments/images, and recheck source visibility before edits. |
 | **1.6.0** | Strengthened Slack integration security. Quote imports verify channel membership for both the user and bot. Notifications exclude private information and recheck access before sending. Added quote tampering detection, independent signing and verification switches, a legacy quote signing task, and stronger permission checks for DM searches. |
