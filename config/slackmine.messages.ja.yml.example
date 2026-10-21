@@ -298,8 +298,8 @@ messages:
     destination: 接続先
     disconnect: 接続を解除
     save_history: これまでの会話も保存する
-    picker_hint: 接続するチケット番号を入力してください。確認画面で過去の発言を選べます。
-    issue_number: チケット番号
+    picker_hint: 接続するチケット番号またはURLを入力してください。確認画面で過去の発言を選べます。
+    issue_number: チケット番号またはURL
     history: 過去の会話
     review: 内容を確認
     invalid_review: 確認情報が無効です。メニューからやり直してください。

@@ -259,11 +259,20 @@ module Slackmine
       preview_error(view_id, e, project: issue&.project)
     end
 
+    def issue_reference_id(value)
+      value = value.to_s.strip.sub(/\A#/, '')
+      return value if value.match?(/\A[1-9]\d*\z/)
+
+      url = value.sub(/[?#].*\z/, '')
+      match = url.match(%r{/issues/([1-9]\d*)\z})
+      match[1] if match && url == Formatter.url("/issues/#{match[1]}")
+    end
+
     def pick(app, team, viewer, payload)
       source = source_for(app, team, viewer, payload)
       return error(message('invalid_review')) unless source
-      id = state(payload, 'issue')['value'].to_s.strip.sub(/\A#/, '')
-      issue = Issue.find_by(id: id) if id.match?(/\A[1-9]\d*\z/)
+      id = issue_reference_id(state(payload, 'issue')['value'])
+      issue = Issue.find_by(id: id) if id
       return error(message('issue_denied', project: issue&.project)) unless allowed?(issue, viewer, app, team)
       source = source.merge('issue_id' => issue.id, 'history' => Array(state(payload, 'history')['selected_options']).any? { |o| o['value'] == 'history' }, 'cutoff' => timestamp_now)
       started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -333,7 +342,7 @@ module Slackmine
       return error(message('invalid_review')) unless source
       issue = Issue.find_by(id: source['issue_id'])
       return error(message('denied', project: issue&.project)) unless allowed?(issue, viewer, app, team)
-      entered_id = state(payload, 'issue')['value'].to_s.strip.sub(/\A#/, '')
+      entered_id = issue_reference_id(state(payload, 'issue')['value'])
       return error(message('destination_changed', project: issue&.project)) unless entered_id == issue.id.to_s
       return error(message('review_incomplete', project: issue&.project)) unless source['disconnect'] || source['ready']
       selected = Array(source['posts']).each_with_index.select do |_, index|

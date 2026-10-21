@@ -45,11 +45,11 @@ class ThreadConnectionsTest < Minitest::Test
     end
   end
 
-  def context
+  def context(issue_lookup: @issue)
     Slackmine.stub(:config, @settings) do
       Slackmine::WorkObjects.stub(:viewer_for, @viewer) do
         Slackmine::WorkObjects.stub(:integration_for, @integration) do
-          Issue.stub(:find_by, @issue) do
+          Issue.stub(:find_by, issue_lookup) do
             enqueue = ->(*args) { @reject_enqueue ? false : (@queued << args; Object.new) }
             configured = Object.new
             configured.define_singleton_method(:perform_later) { |*args| enqueue.call(*args) }
@@ -217,6 +217,72 @@ class ThreadConnectionsTest < Minitest::Test
       refute @calls.any? { |method, _| method == 'views.update' }
       drain_jobs
       assert_equal CONNECTIONS::SAVE_CALLBACK, @calls.last.last['view']['callback_id']
+    end
+  end
+
+  def test_pick_accepts_numbers_and_local_issue_urls
+    url = Slackmine::Formatter.url('/issues/7')
+    ['7', '#7', " #{url} ", "#{url}#note-3", "#{url}?tab=history#note-3"].each do |value|
+      found = []
+      @source['nonce'] = SecureRandom.hex(16)
+      context(issue_lookup: ->(id:) { found << id; id.to_s == '7' ? @issue : nil }) do
+        view = CONNECTIONS.modal([], app: 'ATEST', team: 'TTEST', source: @source, callback: CONNECTIONS::PICK_CALLBACK)
+        result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(view, {
+          'issue' => { 'issue' => { 'value' => value } }
+        }))
+        assert_equal 'update', result['response_action'], value
+        assert_equal CONNECTIONS::SAVE_CALLBACK, result['view']['callback_id'], value
+        assert_equal 7, CONNECTIONS.source_for('ATEST', 'TTEST', @viewer, submitted(result['view'], {}))['issue_id']
+        assert_includes found.map(&:to_s), '7'
+        # Slack retains the original value for an unchanged block/action ID,
+        # even when the updated view supplies a numeric initial_value.
+        saved = CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], {
+          'issue' => { 'issue' => { 'value' => value } }
+        }))
+        assert_equal({}, saved, value)
+        assert_equal 1, @queued.size, value
+        drain_jobs
+      end
+    end
+  end
+
+  def test_pick_rejects_foreign_urls_and_malformed_issue_references_without_lookup
+    url = Slackmine::Formatter.url('/issues/7')
+    ['https://other.invalid/issues/7', "#{url}/edit", "#{url}8oops", '0', '#0', 'text 7', ''].each do |value|
+      context(issue_lookup: ->(*) { flunk "Unexpected lookup for #{value}" }) do
+        view = CONNECTIONS.modal([], app: 'ATEST', team: 'TTEST', source: @source, callback: CONNECTIONS::PICK_CALLBACK)
+        result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(view, {
+          'issue' => { 'issue' => { 'value' => value } }
+        }))
+        assert_equal 'errors', result['response_action'], value
+      end
+    end
+  end
+
+  def test_pick_checks_permissions_for_issue_urls
+    @issue.define_singleton_method(:notes_addable?) { |*| false }
+    context do
+      view = CONNECTIONS.modal([], app: 'ATEST', team: 'TTEST', source: @source, callback: CONNECTIONS::PICK_CALLBACK)
+      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(view, {
+        'issue' => { 'issue' => { 'value' => Slackmine::Formatter.url('/issues/7') } }
+      }))
+      assert_equal 'errors', result['response_action']
+      assert_empty @queued
+    end
+  end
+
+  def test_save_rejects_changed_or_foreign_issue_urls
+    url = Slackmine::Formatter.url('/issues/8')
+    [url, "#{url}#note-3", 'https://other.invalid/issues/7', '7oops'].each do |value|
+      context do
+        view = preview
+        result = CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(view, {
+          'issue' => { 'issue' => { 'value' => value } }
+        }))
+        assert_equal 'errors', result['response_action'], value
+        assert_equal CONNECTIONS.message('destination_changed', project: @issue.project), result['errors']['issue']
+        assert_empty @queued
+      end
     end
   end
 

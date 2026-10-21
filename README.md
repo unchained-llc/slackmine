@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.7.0**.
+Version **1.7.3**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -908,7 +908,7 @@ The selected message is temporarily stored in the existing `Rails.cache`, bound 
 
 ![Message menu shortcuts: create an Issue or connect a thread](docs/images/features/message-menu.webp)
 
-From a message's **More actions** menu, choose **Connect a thread to an existing Issue** and enter the Issue number. **Save past conversation too** is selected by default. Review the past posts and deselect any you do not want to import. Confirming the connection saves the selected history as one comment under the connecting user's Redmine identity, preserving the original speakers, timestamps, and Slack links. Future replies and files are saved under each mapped user's Redmine identity.
+From a message's **More actions** menu, choose **Connect a thread to an existing Issue** and enter the Issue number (with or without `#`) or its Redmine URL. URLs with query parameters or comment anchors are also supported. **Save past conversation too** is selected by default. Review the past posts and deselect any you do not want to import. Confirming the connection saves the selected history as one comment under the connecting user's Redmine identity, preserving the original speakers, timestamps, and Slack links. Future replies and files are saved under each mapped user's Redmine identity.
 
 Use **Create an Issue from a message** for the creation shortcut and **Connect a thread to an existing Issue** for this connection shortcut. Creation copies only the selected message; connection applies to the whole thread. Rename shortcut labels without changing their callback IDs.
 
@@ -1325,6 +1325,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.3** | Accept Redmine issue URLs as well as issue numbers when connecting Slack threads, including URLs with query parameters or comment anchors. |
 | **1.7.2** | Link added attachment filenames and issue attachment metadata to their Redmine attachment pages in Slack notifications. |
 | **1.7.1** | Fixed slash command replies in DMs and channels inaccessible to the bot by using Slack's response URL. Plain keywords now search issue subjects; an empty command still shows help. |
 | **1.7.0** | Add opt-in notification coalescing for the same Issue and destination, regardless of updater or update count. Post immediately, then edit the original message within a default five-minute window. Toggle with `notification_coalescing.enabled`; merge field histories, preserve comments/images, and recheck source visibility before edits. |

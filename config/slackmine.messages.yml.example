@@ -298,8 +298,8 @@ messages:
     destination: Destination
     disconnect: Disconnect
     save_history: Save the conversation so far
-    picker_hint: Enter the Issue number to connect. You can select past messages on the review screen.
-    issue_number: Issue number
+    picker_hint: Enter the Issue number or URL to connect. You can select past messages on the review screen.
+    issue_number: Issue number or URL
     history: Past conversation
     review: Review
     invalid_review: Invalid review information. Open the shortcut again.
