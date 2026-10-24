@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.7.3**.
+Version **1.7.4**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1325,6 +1325,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.4** | Display newly referenced images in comment diff notifications, including files attached after the comment was created. Do not repeat unchanged images when only text is edited. |
 | **1.7.3** | Accept Redmine issue URLs as well as issue numbers when connecting Slack threads, including URLs with query parameters or comment anchors. |
 | **1.7.2** | Link added attachment filenames and issue attachment metadata to their Redmine attachment pages in Slack notifications. |
 | **1.7.1** | Fixed slash command replies in DMs and channels inaccessible to the bot by using Slack's response URL. Plain keywords now search issue subjects; an empty command still shows help. |

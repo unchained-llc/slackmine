@@ -632,7 +632,10 @@ module Slackmine
     return unless issue.is_a?(Issue) && !issue.is_private?
     return if journal&.private_notes?
 
-    source_attachments = journal ? journal.attachments : issue.attachments
+    # Editing an older comment can reference files added to the issue later.
+    # Prefer the journal's own attachment when filenames collide.
+    source_attachments = issue.attachments.to_a
+    source_attachments += journal.attachments.to_a if journal
     attachments = source_attachments.each_with_object({}) { |attachment, indexed| indexed[attachment.filename.downcase] = attachment }
     blocks = payload['blocks'] || payload.dig('attachments', 0, 'blocks')
     return unless blocks

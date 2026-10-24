@@ -340,7 +340,10 @@ module Slackmine
         blocks.concat(updated_body_blocks(section_label('comment'), previous_notes, notes, blocks: blocks,
                                           full_heading: section_label('updated_comment'), diff_kind: :issue_comment))
         if Slackmine.body_diff_enabled?(:issue_comment)
-          image_references(notes).each { |name| blocks << section_text("![](#{name})") }
+          previous_images = image_references(previous_notes).map(&:downcase)
+          image_references(notes).each do |name|
+            blocks << section_text("![](#{name})") unless previous_images.include?(name.downcase)
+          end
         end
       elsif notes.to_s.strip.present?
         heading = section_label(comment_action == 'updated' ? 'updated_comment' : 'added_comment')

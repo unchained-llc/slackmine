@@ -48,11 +48,12 @@ end
 
 class Issue
   attr_reader :id
-  attr_accessor :project
+  attr_accessor :project, :attachments
 
   def initialize(id, private_issue: false)
     @id = id
     @private_issue = private_issue
+    @attachments = []
   end
 
   def is_private?
@@ -1762,7 +1763,7 @@ class ImageNotificationTest < Minitest::Test
     assert_equal 1, blocks.count { |block| block['type'] == 'image' }
   end
 
-  def test_edited_comment_embeds_image_with_full_text_or_diff
+  def test_edited_comment_only_repeats_unchanged_image_in_full_text_mode
     name = 'screenshot.png'
     attachment = OpenStruct.new(id: 42, filename: name)
     issue = OpenStruct.new(id: 7098, subject: 'Title', project: OpenStruct.new(name: 'Agentic'),
@@ -1789,12 +1790,43 @@ class ImageNotificationTest < Minitest::Test
 
       blocks = message.dig('attachments', 0, 'blocks')
       assert_equal '#6D5DFB', message.dig('attachments', 0, 'color')
-      assert_equal 1, blocks.count { |block| block['type'] == 'image' }
-      assert_equal 'F123', blocks.find { |block| block['type'] == 'image' }.dig('slack_file', 'id')
       if show_diff
+        refute blocks.any? { |block| block['type'] == 'image' }
         assert_includes blocks.find { |block| block['type'] == 'markdown' }['text'], "![](#{name})"
       else
+        assert_equal 1, blocks.count { |block| block['type'] == 'image' }
+        assert_equal 'F123', blocks.find { |block| block['type'] == 'image' }.dig('slack_file', 'id')
         refute blocks.any? { |block| block['type'] == 'markdown' }
+      end
+    end
+  end
+
+  def test_comment_diff_only_uploads_new_image_references
+    issue = OpenStruct.new(id: 7097, subject: 'Title', project: OpenStruct.new(name: 'Agentic'),
+                           tracker: OpenStruct.new(name: 'Task'))
+    attachments = %w[old.png new.png].map { |name| OpenStruct.new(filename: name) }
+    cases = [
+      ["![](old.png)", "![](old.png)\n\naaaaaaa", []],
+      ["![](old.png)", "![](old.png)\n![](new.png)", ['new.png']],
+      ["![](old.png)", "![](new.png)", ['new.png']],
+      ["![](old.png)", 'Image removed', []],
+      ["![before](old.png)", "![after](OLD.png)", []]
+    ]
+    Slackmine.stub(:config, { 'slack' => { 'body_diff' => true } }) do
+      Journal.stub(:find_by, journal(attachments: attachments)) do
+        cases.each do |before, after, expected|
+          uploaded = []
+          message = Slackmine::Formatter.journal_payload(
+            issue, actor: OpenStruct.new(name: 'Editor'), notes: after,
+            previous_notes: before, comment_action: 'updated'
+          )
+          Slackmine.stub(:upload_image, ->(file, _) { uploaded << file.filename; "F-#{file.filename}" }) do
+            Slackmine.add_images(message, Slackmine::Formatter.image_references(after), 1, 'token')
+          end
+          assert_equal expected, uploaded, "#{before.inspect} -> #{after.inspect}"
+          images = message.dig('attachments', 0, 'blocks').select { |block| block['type'] == 'image' }
+          assert_equal expected, images.map { |block| block['alt_text'] }
+        end
       end
     end
   end
@@ -1810,6 +1842,43 @@ class ImageNotificationTest < Minitest::Test
     end
 
     assert_includes message.dig('attachments', 0, 'blocks', 0, 'text'), '[Image: screenshot.png](https://redmine.example.com/attachments/42)'
+  end
+
+  def test_edited_comment_finds_image_attached_to_issue_after_journal_creation
+    name = 'F0CBX76CL5A-image@2x.png'
+    attachment = OpenStruct.new(id: 42, filename: name)
+    source = journal
+    source.journalized.attachments = [attachment]
+    issue = OpenStruct.new(id: 7097, subject: 'Title', project: OpenStruct.new(name: 'Agentic'),
+                           tracker: OpenStruct.new(name: 'Task'))
+    Slackmine.stub(:config, { 'slack' => { 'body_diff' => true } }) do
+      message = Slackmine::Formatter.journal_payload(
+        issue, actor: OpenStruct.new(name: 'Editor'),
+        notes: "Before\n![添付画像](#{name})", previous_notes: 'Before', comment_action: 'updated'
+      )
+      Journal.stub(:find_by, source) do
+        Slackmine.stub(:upload_image, ->(file, token) {
+          assert_same attachment, file
+          assert_equal 'token', token
+          'F123'
+        }) { Slackmine.add_images(message, [name], 1, 'token') }
+      end
+      blocks = message.dig('attachments', 0, 'blocks')
+      assert_includes blocks.find { |block| block['type'] == 'markdown' }['text'], "![添付画像](#{name})"
+      assert_equal ['F123'], blocks.select { |block| block['type'] == 'image' }.map { |block| block.dig('slack_file', 'id') }
+    end
+  end
+
+  def test_journal_attachment_takes_precedence_over_issue_attachment_with_same_name
+    source = journal(attachments: [OpenStruct.new(id: 42, filename: 'screenshot.png')])
+    source.journalized.attachments = [OpenStruct.new(id: 43, filename: 'screenshot.png')]
+    message = { 'blocks' => [Slackmine::Formatter.section_text('![](screenshot.png)')] }
+    Journal.stub(:find_by, source) do
+      Slackmine.stub(:upload_image, ->(file, _) { assert_equal 42, file.id; 'F123' }) do
+        Slackmine.add_images(message, ['screenshot.png'], 1, 'token')
+      end
+    end
+    assert_equal 'image', message['blocks'].first['type']
   end
 
   def test_embeds_uploaded_image_and_links_to_redmine

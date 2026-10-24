@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **1.7.3**。
+バージョン **1.7.4**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -1291,6 +1291,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **1.7.4** | コメントの差分通知に今回追加した画像を表示します。コメント作成後に添付された画像にも対応し、文字だけの編集では既存画像を再表示しません。 |
 | **1.7.3** | Slackスレッドの接続先に、チケット番号に加えてRedmineのチケットURLを入力できるようにしました。検索パラメーターやコメント位置付きのURLにも対応します。 |
 | **1.7.2** | Slack通知の追加添付ファイル名とチケットの添付一覧から、Redmineの添付詳細ページを開けるようにしました。 |
 | **1.7.1** | Slackの専用返信URLを使い、BotがアクセスできないDMやチャンネルでのスラッシュコマンド返信を修正しました。キーワードだけで題名を検索でき、引数なしでは従来通りヘルプを表示します。 |
