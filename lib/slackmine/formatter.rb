@@ -2,6 +2,7 @@
 
 require 'time'
 require 'yaml'
+require 'uri'
 
 module Slackmine
   module Formatter
@@ -99,9 +100,15 @@ module Slackmine
     # Only local Redmine attachment names are eligible for upload. Remote URLs
     # and paths must never be fetched on behalf of a notification.
     def image_references(value)
-      value.to_s.scan(/!\[[^\]\n]*\]\(([^)\n]+\.(?:png|jpe?g|gif))\)/i).flatten.uniq.reject do |name|
-        name.include?('/') || name.include?('\\') || name.include?(':')
-      end
+      value.to_s.scan(/!\[[^\]\n]*\]\(([^)\n]+\.(?:png|jpe?g|gif))\)/i).flatten
+           .uniq.select { |name| image_reference_name(name) }
+    end
+
+    def image_reference_name(value)
+      name = URI::DEFAULT_PARSER.unescape(value.to_s)
+      return if name.match?(/[\/\\:\x00\r\n]/)
+
+      name if name.match?(/\.(?:png|jpe?g|gif)\z/i)
     end
 
     def protect_mrkdwn(value, protected)
@@ -340,7 +347,10 @@ module Slackmine
         blocks.concat(updated_body_blocks(section_label('comment'), previous_notes, notes, blocks: blocks,
                                           full_heading: section_label('updated_comment'), diff_kind: :issue_comment))
         if Slackmine.body_diff_enabled?(:issue_comment)
-          image_references(notes).each { |name| blocks << section_text("![](#{name})") }
+          previous_images = image_references(previous_notes).map { |name| image_reference_name(name).downcase }
+          image_references(notes).each do |name|
+            blocks << section_text("![](#{name})") unless previous_images.include?(image_reference_name(name).downcase)
+          end
         end
       elsif notes.to_s.strip.present?
         heading = section_label(comment_action == 'updated' ? 'updated_comment' : 'added_comment')

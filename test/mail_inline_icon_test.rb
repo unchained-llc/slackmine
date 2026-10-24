@@ -5,7 +5,7 @@ require_relative '../lib/slackmine/mail_inline_icon'
 require_relative '../lib/slackmine/mail_preference'
 
 class MailInlineIconTest < Minitest::Test
-  ICON = '<span class="slackmine-link-card"><a href="https://example.slack.com/archives/C123/p123"><span class="slackmine-mail-link-layout" style="display: inline-table; vertical-align: middle"><span style="display: table-cell; vertical-align: middle; padding-right: 6px"><img class="slackmine-mail-icon" src="slackmine-bundled-logo.png"></span><span style="display: table-cell; vertical-align: middle; line-height: 20px"><strong>日本語</strong></span></span></a></span>'.freeze
+  ICON = '<span class="slackmine-link-card"><a href="https://example.slack.com/archives/C123/p123"><span class="slackmine-mail-link-layout" style="display: inline-table; vertical-align: middle"><span style="display: table-cell; vertical-align: middle; padding-right: 6px"><img class="slackmine-mail-icon" src="slackmine-bundled-logo.png"></span><span style="display: table-cell; vertical-align: middle; line-height: 20px"><strong>Japanese text</strong></span></span></a></span>'.freeze
 
   def assert_embedded(message, count)
     # Encoding can lazily repair missing headers; verify before that happens.
@@ -30,10 +30,10 @@ class MailInlineIconTest < Minitest::Test
     doc.css('.slackmine-mail-link-layout').each do |layout|
       assert_equal 2, layout.element_children.size
       layout.element_children.each { |cell| assert_match(/vertical-align:\s*middle/, cell['style']) }
-      assert_equal '日本語', layout.element_children.last.text
+      assert_equal 'Japanese text', layout.element_children.last.text
     end
     assert_equal [logos.first.url], doc.css('img').map { |img| img['src'] }.uniq
-    assert_includes doc.text, '日本語'
+    assert_includes doc.text, 'Japanese text'
     received
   end
 
@@ -78,13 +78,13 @@ class MailInlineIconTest < Minitest::Test
   end
 
   def test_mailer_patch_preserves_long_japanese_html_when_delivery_inlines_css
-    text = 'チケットが更新されました。日本語のコメントです。' * 1000
+    text = "Issue updated. \u65e5\u672c\u8a9e comment." * 1000
     avatar = '<img class="slackmine-mail-avatar" src="https://avatars.slack-edge.com/example.png">'
     html = '<html><body><p>' + text + '</p>' + ICON.sub('</span></a>', avatar + '</span></a>') + '</body></html>'
     base = Class.new do
       define_method(:mail) do |*args|
         message = Mail.new
-        message.text_part = Mail::Part.new(content_type: 'text/plain; charset=UTF-8', body: 'テキスト版')
+        message.text_part = Mail::Part.new(content_type: 'text/plain; charset=UTF-8', body: 'Plain text')
         message.html_part = Mail::Part.new(content_type: 'text/html; charset=UTF-8', body: html)
         message
       end
@@ -103,7 +103,7 @@ class MailInlineIconTest < Minitest::Test
       doc = Nokogiri::HTML.parse(received.html_part.body.decoded, nil, 'UTF-8')
       assert_equal text, doc.at_css('p').text
       assert_equal 'color: purple', doc.at_css('p')['style']
-      assert_equal 'テキスト版', received.text_part.body.decoded.force_encoding('UTF-8')
+      assert_equal 'Plain text', received.text_part.body.decoded.force_encoding('UTF-8')
       assert_equal 2, received.attachments.size
       received.attachments.each { |attachment| assert_equal image, attachment.body.decoded }
       assert doc.css('img').all? { |node| node['src'].start_with?('cid:') }

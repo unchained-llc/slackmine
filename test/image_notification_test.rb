@@ -48,11 +48,12 @@ end
 
 class Issue
   attr_reader :id
-  attr_accessor :project
+  attr_accessor :project, :attachments
 
   def initialize(id, private_issue: false)
     @id = id
     @private_issue = private_issue
+    @attachments = []
   end
 
   def is_private?
@@ -80,7 +81,7 @@ end
 
 class CustomField
   def self.find_by(id:)
-    OpenStruct.new(name: '顧客分類', visible?: true)
+    OpenStruct.new(name: 'Customer category', visible?: true)
   end
 end
 
@@ -92,7 +93,7 @@ end
 
 class Version
   def self.find_by(id:)
-    OpenStruct.new(name: '旧版')
+    OpenStruct.new(name: 'Old release')
   end
 
   def self.named(_name)
@@ -1537,7 +1538,7 @@ class ImageNotificationTest < Minitest::Test
   end
 
   def payload
-    { 'attachments' => [{ 'fallback' => 'Example Tracker notification', 'blocks' => [{ 'type' => 'section', 'text' => { 'type' => 'mrkdwn', 'text' => '*追加コメント*\n> ![](clipboard-202609281254-s6trp@2x.png)' } }] }] }
+    { 'attachments' => [{ 'fallback' => 'Example Tracker notification', 'blocks' => [{ 'type' => 'section', 'text' => { 'type' => 'mrkdwn', 'text' => '*Added comment*\n> ![](clipboard-202609281254-s6trp@2x.png)' } }] }] }
   end
 
   def test_restrict_transfer_disables_automatic_link_and_media_previews
@@ -1565,6 +1566,52 @@ class ImageNotificationTest < Minitest::Test
                  Slackmine::Formatter.image_references('![](clipboard-202609281254-s6trp@2x.png)')
     assert_empty Slackmine::Formatter.image_references('![](https://example.com/image.png)')
     assert_equal '![English](english.png)', Slackmine::Formatter.mrkdwn('![English](english.png)')
+  end
+
+  def test_decodes_local_image_references_without_converting_plus_to_space
+    assert_equal ['F0CCRLVJFSL-image%402x.png', 'a+b.png'],
+                 Slackmine::Formatter.image_references('![](F0CCRLVJFSL-image%402x.png) ![](a+b.png)')
+    assert_equal 'F0CCRLVJFSL-image@2x.png', Slackmine::Formatter.image_reference_name('F0CCRLVJFSL-image%402x.png')
+    assert_equal 'a+b.png', Slackmine::Formatter.image_reference_name('a+b.png')
+    assert_equal 'literal%40.png', Slackmine::Formatter.image_reference_name('literal%2540.png')
+    %w[https%3A%2F%2Fexample.com%2Fx.png ..%2Fx.png dir%5Cx.png x%0Ay.png x%00y.png].each do |name|
+      assert_empty Slackmine::Formatter.image_references("![](#{name})")
+    end
+  end
+
+  def test_encoded_image_reference_matches_actual_attachment_in_markdown_and_section_blocks
+    name = 'F0CCRLVJFSL-image@2x.png'
+    attachment = OpenStruct.new(id: 23478, filename: name)
+    [Slackmine::Formatter.section_text('![](F0CCRLVJFSL-image%402x.png)'),
+     { 'type' => 'markdown', 'text' => '![](F0CCRLVJFSL-image%402x.png)' }].each do |block|
+      message = { 'blocks' => [block] }
+      Journal.stub(:find_by, journal(attachments: [attachment])) do
+        Slackmine.stub(:upload_image, ->(file, _) { assert_same attachment, file; 'F123' }) do
+          Slackmine.add_images(message, ['F0CCRLVJFSL-image%402x.png'], 1, 'token')
+        end
+      end
+      assert_equal 'F123', message.dig('blocks', 0, 'slack_file', 'id')
+    end
+  end
+
+  def test_japanese_alt_text_and_raw_or_encoded_japanese_filename_match_attachment
+    name = "\u6dfb\u4ed8\u753b\u50cf\u30fb\u753b\u9762@2x.png"
+    encoded = '%E6%B7%BB%E4%BB%98%E7%94%BB%E5%83%8F%E3%83%BB%E7%94%BB%E9%9D%A2%402x.png'
+    attachment = OpenStruct.new(id: 42, filename: name)
+    [name, encoded].each do |reference|
+      notes = "![Attached image](#{reference})"
+      names = Slackmine::Formatter.image_references(notes)
+      assert_equal [reference], names
+      assert_equal name, Slackmine::Formatter.image_reference_name(reference)
+      message = { 'blocks' => [Slackmine::Formatter.section_text(notes)] }
+      Journal.stub(:find_by, journal(attachments: [attachment])) do
+        Slackmine.stub(:upload_image, ->(file, _) { assert_same attachment, file; 'FJP' }) do
+          Slackmine.add_images(message, names, 1, 'token')
+        end
+      end
+      assert_equal 'FJP', message.dig('blocks', 0, 'slack_file', 'id')
+      assert_equal name, message.dig('blocks', 0, 'alt_text')
+    end
   end
 
   def test_four_argument_job_retains_security_context_without_changing_argument_count
@@ -1653,19 +1700,19 @@ class ImageNotificationTest < Minitest::Test
 
   def test_ordered_lists_use_markdown_inside_the_colored_attachment
     notes = "1. first\n1. second\n1. third\n\n![](screenshot.png)\n\nDone"
-    blocks = Slackmine::Formatter.mrkdwn_sections('追加コメント', notes)
+    blocks = Slackmine::Formatter.mrkdwn_sections('Added comment', notes)
     message = Slackmine::Formatter.payload('Example Tracker notification', blocks: blocks)
 
     assert_equal '#6D5DFB', message.dig('attachments', 0, 'color')
-    assert_equal [{ 'type' => 'markdown', 'text' => "**追加コメント**\n\n#{notes}" }], message.dig('attachments', 0, 'blocks')
+    assert_equal [{ 'type' => 'markdown', 'text' => "**Added comment**\n\n#{notes}" }], message.dig('attachments', 0, 'blocks')
     assert_nil message['blocks']
   end
 
   def test_change_fields_are_split_to_fit_slack_section_limit
-    changes = 12.times.map { |index| ["項目#{index}", '変更'] }
+    changes = 12.times.map { |index| ["Field#{index}", 'Changed'] }
     blocks = Slackmine::Formatter.change_field_blocks(changes)
     assert_equal [10, 2], blocks.map { |block| block.fetch('fields').length }
-    assert_includes blocks.last.fetch('fields').last.fetch('text'), '項目11'
+    assert_includes blocks.last.fetch('fields').last.fetch('text'), 'Field11'
   end
 
   def test_deleted_labels_are_distinct_from_updates
@@ -1686,49 +1733,49 @@ class ImageNotificationTest < Minitest::Test
       OpenStruct.new(property: 'attr', prop_key: 'fixed_version_id', old_value: value.call('1'), value: value.call('2')),
       OpenStruct.new(property: 'cf', prop_key: '42', old_value: value.call('A'), value: value.call('B'))
     ]
-    issue = OpenStruct.new(fixed_version: OpenStruct.new(name: '新版'))
+    issue = OpenStruct.new(fixed_version: OpenStruct.new(name: 'New release'))
     changes = Slackmine::Formatter.change_fields(issue, details)
-    assert_equal ['Attachment', 'Attachment', 'Parent issue', 'Target version', '顧客分類'], changes.map(&:first)
+    assert_equal ['Attachment', 'Attachment', 'Parent issue', 'Target version', 'Customer category'], changes.map(&:first)
     assert_equal ['Added: <https://redmine.example.com/attachments/1|one.png>',
                   'Added: <https://redmine.example.com/attachments/2|two.png>'], changes.first(2).map(&:last)
     assert_equal 'None → <https://redmine.example.com/issues/7011|#7011>', changes[2][1]
-    assert_equal '旧版 → 新版', changes[3][1]
+    assert_equal 'Old release → New release', changes[3][1]
     assert_equal 'A → B', changes[4][1]
   end
 
   def test_attachment_changes_link_added_files_and_keep_deleted_files_as_text
-    filename = '請求書 & <確認>|2026.pdf'
+    filename = 'Invoice & <Confirmation>|2026.pdf'
     details = [
       OpenStruct.new(property: 'attachment', prop_key: '23439', old_value: '', value: filename),
       OpenStruct.new(property: 'attachment', prop_key: '23440', old_value: filename, value: '')
     ]
     changes = Slackmine::Formatter.change_fields(nil, details)
-    assert_equal 'Added: <https://redmine.example.com/attachments/23439|請求書 &amp; &lt;確認&gt;&#124;2026.pdf>', changes[0][1]
-    assert_equal 'Removed: 請求書 &amp; &lt;確認&gt;|2026.pdf', changes[1][1]
+    assert_equal 'Added: <https://redmine.example.com/attachments/23439|Invoice &amp; &lt;Confirmation&gt;&#124;2026.pdf>', changes[0][1]
+    assert_equal 'Removed: Invoice &amp; &lt;Confirmation&gt;|2026.pdf', changes[1][1]
   end
 
   def test_issue_attachment_metadata_links_each_file
     issue = OpenStruct.new(project: OpenStruct.new(name: 'Example'), attachments: [
       OpenStruct.new(id: 23439, filename: 'paymentdetails.pdf'),
-      OpenStruct.new(id: 23440, filename: '確認.png')
+      OpenStruct.new(id: 23440, filename: 'Confirmation.png')
     ])
     fields = Slackmine.stub(:config, { 'slack' => { 'metadata' => { 'issue' => { 'attachments' => true } } } }) do
       Slackmine::Formatter.metadata_fields(issue, nil, 'updated')
     end
-    assert_equal '<https://redmine.example.com/attachments/23439|paymentdetails.pdf>, <https://redmine.example.com/attachments/23440|確認.png>',
+    assert_equal '<https://redmine.example.com/attachments/23439|paymentdetails.pdf>, <https://redmine.example.com/attachments/23440|Confirmation.png>',
                  fields.assoc('attachments')[1]
   end
 
   def test_long_ordered_list_keeps_the_existing_section_format
     notes = "1. first\n" + ('x' * 12_000)
-    assert_equal 'section', Slackmine::Formatter.mrkdwn_sections('追加コメント', notes).first['type']
+    assert_equal 'section', Slackmine::Formatter.mrkdwn_sections('Added comment', notes).first['type']
   end
 
   def test_uploaded_image_stays_between_markdown_text_blocks
     name = 'screenshot.png'
     attachment = OpenStruct.new(id: 42, filename: name)
     notes = "1. first\n1. second\n\n![](#{name})\n\nDone"
-    message = Slackmine::Formatter.payload('Example Tracker notification', blocks: Slackmine::Formatter.mrkdwn_sections('追加コメント', notes))
+    message = Slackmine::Formatter.payload('Example Tracker notification', blocks: Slackmine::Formatter.mrkdwn_sections('Added comment', notes))
     Journal.stub(:find_by, journal(attachments: [attachment])) do
       Slackmine.stub(:upload_image, 'F123') do
         Slackmine.add_images(message, [name], 1, 'token')
@@ -1737,7 +1784,7 @@ class ImageNotificationTest < Minitest::Test
 
     assert_equal '#6D5DFB', message.dig('attachments', 0, 'color')
     assert_equal ['markdown', 'image', 'markdown'], message.dig('attachments', 0, 'blocks').map { |block| block['type'] }
-    assert_equal "**追加コメント**\n\n1. first\n1. second", message.dig('attachments', 0, 'blocks', 0, 'text')
+    assert_equal "**Added comment**\n\n1. first\n1. second", message.dig('attachments', 0, 'blocks', 0, 'text')
     assert_equal 'F123', message.dig('attachments', 0, 'blocks', 1, 'slack_file', 'id')
     assert_equal 'Done', message.dig('attachments', 0, 'blocks', 2, 'text')
   end
@@ -1745,9 +1792,9 @@ class ImageNotificationTest < Minitest::Test
   def test_image_reference_inside_body_diff_remains_literal
     name = 'screenshot.png'
     attachment = OpenStruct.new(id: 42, filename: name)
-    diff = Slackmine::Formatter.body_diff_blocks('説明', '', "![](#{name})").first
-    comment_diff = Slackmine::Formatter.body_diff_blocks('コメント', '', "![](#{name})").first
-    comment = Slackmine::Formatter.mrkdwn_sections('追加コメント', "1. See image\n![](#{name})").first
+    diff = Slackmine::Formatter.body_diff_blocks('Description', '', "![](#{name})").first
+    comment_diff = Slackmine::Formatter.body_diff_blocks('Comment', '', "![](#{name})").first
+    comment = Slackmine::Formatter.mrkdwn_sections('Added comment', "1. See image\n![](#{name})").first
     message = Slackmine::Formatter.payload('Example Tracker notification', blocks: [diff, comment_diff, comment])
 
     Journal.stub(:find_by, journal(attachments: [attachment])) do
@@ -1762,7 +1809,7 @@ class ImageNotificationTest < Minitest::Test
     assert_equal 1, blocks.count { |block| block['type'] == 'image' }
   end
 
-  def test_edited_comment_embeds_image_with_full_text_or_diff
+  def test_edited_comment_only_repeats_unchanged_image_in_full_text_mode
     name = 'screenshot.png'
     attachment = OpenStruct.new(id: 42, filename: name)
     issue = OpenStruct.new(id: 7098, subject: 'Title', project: OpenStruct.new(name: 'Agentic'),
@@ -1789,12 +1836,44 @@ class ImageNotificationTest < Minitest::Test
 
       blocks = message.dig('attachments', 0, 'blocks')
       assert_equal '#6D5DFB', message.dig('attachments', 0, 'color')
-      assert_equal 1, blocks.count { |block| block['type'] == 'image' }
-      assert_equal 'F123', blocks.find { |block| block['type'] == 'image' }.dig('slack_file', 'id')
       if show_diff
+        refute blocks.any? { |block| block['type'] == 'image' }
         assert_includes blocks.find { |block| block['type'] == 'markdown' }['text'], "![](#{name})"
       else
+        assert_equal 1, blocks.count { |block| block['type'] == 'image' }
+        assert_equal 'F123', blocks.find { |block| block['type'] == 'image' }.dig('slack_file', 'id')
         refute blocks.any? { |block| block['type'] == 'markdown' }
+      end
+    end
+  end
+
+  def test_comment_diff_only_uploads_new_image_references
+    issue = OpenStruct.new(id: 7097, subject: 'Title', project: OpenStruct.new(name: 'Agentic'),
+                           tracker: OpenStruct.new(name: 'Task'))
+    attachments = %w[old.png new.png].map { |name| OpenStruct.new(filename: name) }
+    cases = [
+      ["![](old.png)", "![](old.png)\n\naaaaaaa", []],
+      ["![](old.png)", "![](old.png)\n![](new.png)", ['new.png']],
+      ["![](old.png)", "![](new.png)", ['new.png']],
+      ["![](old.png)", 'Image removed', []],
+      ["![before](old.png)", "![after](OLD.png)", []],
+      ["![](old.png)", "![](%6Fld.png)", []]
+    ]
+    Slackmine.stub(:config, { 'slack' => { 'body_diff' => true } }) do
+      Journal.stub(:find_by, journal(attachments: attachments)) do
+        cases.each do |before, after, expected|
+          uploaded = []
+          message = Slackmine::Formatter.journal_payload(
+            issue, actor: OpenStruct.new(name: 'Editor'), notes: after,
+            previous_notes: before, comment_action: 'updated'
+          )
+          Slackmine.stub(:upload_image, ->(file, _) { uploaded << file.filename; "F-#{file.filename}" }) do
+            Slackmine.add_images(message, Slackmine::Formatter.image_references(after), 1, 'token')
+          end
+          assert_equal expected, uploaded, "#{before.inspect} -> #{after.inspect}"
+          images = message.dig('attachments', 0, 'blocks').select { |block| block['type'] == 'image' }
+          assert_equal expected, images.map { |block| block['alt_text'] }
+        end
       end
     end
   end
@@ -1802,7 +1881,7 @@ class ImageNotificationTest < Minitest::Test
   def test_failed_markdown_image_upload_keeps_a_slackmine_link
     attachment = OpenStruct.new(id: 42, filename: 'screenshot.png')
     notes = "1. first\n\n![](screenshot.png)"
-    message = Slackmine::Formatter.payload('Example Tracker notification', blocks: Slackmine::Formatter.mrkdwn_sections('追加コメント', notes))
+    message = Slackmine::Formatter.payload('Example Tracker notification', blocks: Slackmine::Formatter.mrkdwn_sections('Added comment', notes))
     Journal.stub(:find_by, journal(attachments: [attachment])) do
       Slackmine.stub(:upload_image, nil) do
         Slackmine.add_images(message, [attachment.filename], 1, 'token')
@@ -1810,6 +1889,43 @@ class ImageNotificationTest < Minitest::Test
     end
 
     assert_includes message.dig('attachments', 0, 'blocks', 0, 'text'), '[Image: screenshot.png](https://redmine.example.com/attachments/42)'
+  end
+
+  def test_edited_comment_finds_image_attached_to_issue_after_journal_creation
+    name = 'F0CBX76CL5A-image@2x.png'
+    attachment = OpenStruct.new(id: 42, filename: name)
+    source = journal
+    source.journalized.attachments = [attachment]
+    issue = OpenStruct.new(id: 7097, subject: 'Title', project: OpenStruct.new(name: 'Agentic'),
+                           tracker: OpenStruct.new(name: 'Task'))
+    Slackmine.stub(:config, { 'slack' => { 'body_diff' => true } }) do
+      message = Slackmine::Formatter.journal_payload(
+        issue, actor: OpenStruct.new(name: 'Editor'),
+        notes: "Before\n![Attached image](#{name.sub('@', '%40')})", previous_notes: 'Before', comment_action: 'updated'
+      )
+      Journal.stub(:find_by, source) do
+        Slackmine.stub(:upload_image, ->(file, token) {
+          assert_same attachment, file
+          assert_equal 'token', token
+          'F123'
+        }) { Slackmine.add_images(message, [name], 1, 'token') }
+      end
+      blocks = message.dig('attachments', 0, 'blocks')
+      assert_includes blocks.find { |block| block['type'] == 'markdown' }['text'], "![Attached image](#{name.sub('@', '%40')})"
+      assert_equal ['F123'], blocks.select { |block| block['type'] == 'image' }.map { |block| block.dig('slack_file', 'id') }
+    end
+  end
+
+  def test_journal_attachment_takes_precedence_over_issue_attachment_with_same_name
+    source = journal(attachments: [OpenStruct.new(id: 42, filename: 'screenshot.png')])
+    source.journalized.attachments = [OpenStruct.new(id: 43, filename: 'screenshot.png')]
+    message = { 'blocks' => [Slackmine::Formatter.section_text('![](screenshot.png)')] }
+    Journal.stub(:find_by, source) do
+      Slackmine.stub(:upload_image, ->(file, _) { assert_equal 42, file.id; 'F123' }) do
+        Slackmine.add_images(message, ['screenshot.png'], 1, 'token')
+      end
+    end
+    assert_equal 'image', message['blocks'].first['type']
   end
 
   def test_embeds_uploaded_image_and_links_to_redmine
@@ -1847,7 +1963,7 @@ class ImageNotificationTest < Minitest::Test
     attachments = names.each_with_index.map { |name, index| OpenStruct.new(id: index + 1, filename: name) }
     message = {
       'attachments' => [{ 'fallback' => 'Example Tracker notification', 'blocks' => [
-        { 'type' => 'section', 'text' => { 'type' => 'mrkdwn', 'text' => "*追加コメント*\nEN\n![English](english.png)\n\nJA\n![](japanese.png)\n\nZH\n![](chinese.png)" } },
+        { 'type' => 'section', 'text' => { 'type' => 'mrkdwn', 'text' => "*Added comment*\nEN\n![English](english.png)\n\nJA\n![](japanese.png)\n\nZH\n![](chinese.png)" } },
         { 'type' => 'divider' }
       ] }]
     }
@@ -1859,7 +1975,7 @@ class ImageNotificationTest < Minitest::Test
     end
 
     assert_equal [
-      ['section', "*追加コメント*\nEN"],
+      ['section', "*Added comment*\nEN"],
       ['image', 'FEN'],
       ['section', 'JA'],
       ['image', 'FJA'],
@@ -1942,7 +2058,7 @@ class ImageNotificationTest < Minitest::Test
 
   def test_image_message_keeps_the_colored_card_after_file_sharing
     message = Slackmine::Formatter.payload('Example Tracker notification', blocks: [
-      { 'type' => 'markdown', 'text' => "**追加コメント**\n\n1. first" },
+      { 'type' => 'markdown', 'text' => "**Added comment**\n\n1. first" },
       { 'type' => 'image', 'slack_file' => { 'id' => 'F123' }, 'alt_text' => 'screenshot' },
       { 'type' => 'markdown', 'text' => 'after image' }
     ])
@@ -2243,11 +2359,11 @@ class WorkObjectNotificationTest < Minitest::Test
     @settings['slack']['comment_notifications_in_threads'] = true
     @settings['messages'] = { 'work_objects' => { 'product_name' => 'Example Tracker' } }
     @settings['projects'] = { 'agentic' => { 'messages' => { 'thread_notifications' => {
-      'added_header' => '%{product_name} #%{id} の新規コメント · %{actor}: %{subject}'
+      'added_header' => '%{product_name} #%{id} new comment · %{actor}: %{subject}'
     } } } }
     Slackmine.stub(:config, @settings) do
       result = Slackmine::Formatter.journal_payload(@issue, actor: @actor, notes: 'Body')
-      assert_equal 'Example Tracker <https://redmine.example.com/issues/7|#7> の新規コメント · Alice: Fix A &amp; B', result.dig('_slackmine_thread_comment_payload', 'text')
+      assert_equal 'Example Tracker <https://redmine.example.com/issues/7|#7> new comment · Alice: Fix A &amp; B', result.dig('_slackmine_thread_comment_payload', 'text')
       @settings['projects']['agentic']['messages']['thread_notifications']['added_header'] = '%{unknown}'
       result = Slackmine::Formatter.journal_payload(@issue, actor: @actor, notes: 'Body')
       assert_equal 'Alice · Example Tracker <https://redmine.example.com/issues/7|#7>: New comment', result.dig('_slackmine_thread_comment_payload', 'text')
@@ -2980,19 +3096,19 @@ class WorkObjectDetailsTest < Minitest::Test
   def test_work_object_ui_labels_can_be_overridden_in_yaml
     prepare_action_issue
     @settings['messages'] = {
-      'work_objects' => { 'edit_issue' => '課題を編集', 'add_comment' => 'コメント追加',
-        'edit_title' => '編集 #%{id}', 'save' => '保存', 'cancel' => '戻る', 'comment_placeholder' => '入力してください' },
-      'fields' => { 'status' => '状態', 'priority' => '優先度' },
-      'values' => { 'unassigned' => '未割当' }
+      'work_objects' => { 'edit_issue' => 'Modify issue', 'add_comment' => 'Add a note',
+        'edit_title' => 'Modify #%{id}', 'save' => 'Save changes', 'cancel' => 'Back', 'comment_placeholder' => 'Enter a comment' },
+      'fields' => { 'status' => 'State', 'priority' => 'Urgency' },
+      'values' => { 'unassigned' => 'Unassigned' }
     }
     metadata = capture_details.first[1]['metadata']
-    assert_equal '課題を編集', metadata.dig('entity_payload', 'actions', 'primary_actions', 0, 'text')
+    assert_equal 'Modify issue', metadata.dig('entity_payload', 'actions', 'primary_actions', 0, 'text')
     button = action_payload('block_actions', 'container', 'actions' => [{ 'action_id' => 'slackmine_edit_issue' }])
     modal = capture_interaction(button).first[1]['view']
-    assert_equal '編集 #7', modal.dig('title', 'text')
-    assert_equal '保存', modal.dig('submit', 'text')
-    assert_equal '戻る', modal.dig('close', 'text')
-    assert_equal '状態', modal['blocks'].find { |block| block['block_id'] == 'status' }.dig('label', 'text')
+    assert_equal 'Modify #7', modal.dig('title', 'text')
+    assert_equal 'Save changes', modal.dig('submit', 'text')
+    assert_equal 'Back', modal.dig('close', 'text')
+    assert_equal 'State', modal['blocks'].find { |block| block['block_id'] == 'status' }.dig('label', 'text')
     @settings['messages']['work_objects']['edit_title'] = '%{missing}'
     assert_equal 'Edit issue #7', capture_interaction(button).first[1].dig('view', 'title', 'text')
   end
@@ -3261,9 +3377,9 @@ class WorkObjectDetailsTest < Minitest::Test
     modal = WORK.edit_modal(@issue, @user, {})
     assert_equal @issue.description, modal['blocks'].find { |block| block['block_id'] == 'description' }.dig('element', 'initial_value')
     submission = action_payload('view_submission', 'view')
-    submission['view']['state'] = { 'values' => { 'description' => { 'description.input' => { 'value' => "Changed\n本文" } } } }
+    submission['view']['state'] = { 'values' => { 'description' => { 'description.input' => { 'value' => "Changed\nBody" } } } }
     capture_interaction(submission)
-    assert_equal "Changed\n本文", @issue.description
+    assert_equal "Changed\nBody", @issue.description
     assert_equal [:journal, :attributes], @issue.events
     count = @issue.events.length
     capture_interaction(submission)
@@ -3313,7 +3429,7 @@ class WorkObjectDetailsTest < Minitest::Test
     Slackmine.stub(:config, @settings) { assert_equal :restricted, WORK.update_issue(@issue, @user, description: 'Forbidden') }
     assert_equal 'Original', @issue.description
     @issue.define_singleton_method(:safe_attribute?) { |*| true }
-    @issue.description = 'あ' * 3001
+    @issue.description = "\u3042" * 3001
     refute capture_details.first[1].dig('metadata', 'entity_payload', 'fields', 'description').key?('edit')
     refute WORK.edit_modal(@issue, @user, {})['blocks'].any? { |block| block['block_id'] == 'description' }
     Slackmine.stub(:config, @settings) { assert_equal :restricted, WORK.update_issue(@issue, @user, description: 'Shortened') }
@@ -3602,7 +3718,7 @@ class NotificationDisplaySettingsTest < Minitest::Test
       value.is_a?(Array) ? value.map(&render).join(', ') : render.call(value)
     end
     format = Object.new
-    custom_field = OpenStruct.new(id: 42, name: '顧客ID', format: format, visible?: true)
+    custom_field = OpenStruct.new(id: 42, name: 'Customer ID', format: format, visible?: true)
     format.define_singleton_method(:formatted_value) do |helper, field, raw, customized, html|
       raise 'Wrong display context' unless helper.equal?(view) && field.equal?(custom_field) &&
                                           customized.equal?(issue) && html == false
@@ -3630,7 +3746,7 @@ class NotificationDisplaySettingsTest < Minitest::Test
     with_custom_change_format(issue, resolved) do
       cases.each do |old_value, value, expected|
         detail = OpenStruct.new(property: 'cf', prop_key: '42', old_value: old_value, value: value)
-        assert_equal [['顧客ID', expected]], Slackmine::Formatter.change_fields(issue, [detail])
+        assert_equal [['Customer ID', expected]], Slackmine::Formatter.change_fields(issue, [detail])
       end
     end
   end
@@ -3646,7 +3762,7 @@ class NotificationDisplaySettingsTest < Minitest::Test
                   Slackmine::Formatter.journal_payload(issue, actor: nil, notes: 'Comment', details: [detail])]
       payloads.each do |payload|
         fields = payload.dig('attachments', 0, 'blocks').flat_map { |block| block.fetch('fields', []) }
-        assert_includes fields.map { |field| field['text'] }, "*顧客ID*\nNone → TELESIGHT[019]"
+        assert_includes fields.map { |field| field['text'] }, "*Customer ID*\nNone → TELESIGHT[019]"
       end
     end
   end
@@ -3788,7 +3904,7 @@ class NotificationDisplaySettingsTest < Minitest::Test
       fields = blocks.flat_map { |block| block.fetch('fields', []) }.map { |entry| entry.fetch('text') }
       assert fields.any? { |field| field == "*Status*\nIn progress" }
       assert fields.any? { |field| field == "*Target version*\nRelease 2" }
-      assert fields.any? { |field| field.include?('旧版 → Release 2') || field.include?('旧版 → 新版') }
+      assert fields.any? { |field| field.include?('Old release → Release 2') || field.include?('Old release → New release') }
       refute fields.any? { |field| field.start_with?('*Project*') }
       assert blocks.any? { |block| heading.call(block) == '*Metadata*' }
       assert blocks.any? { |block| heading.call(block) == '*Changes*' }
@@ -4191,16 +4307,16 @@ class BodyDiffNotificationTest < Minitest::Test
     Slackmine.stub(:config, { 'slack' => { 'body_diff' => false } }) do
       formatter = Slackmine::Formatter
       {
-        '説明' => '概要',
-        '本文' => '本文',
-        'コメント' => '変更後のコメント'
+        'Description' => 'Summary',
+        'Body' => 'Body',
+        'Comment' => 'Updated comment'
       }.each do |label, heading|
         blocks = formatter.updated_body_blocks(label, 'before', 'after', full_heading: heading)
         assert_equal 'section', blocks.first['type']
         assert_includes blocks.first.dig('text', 'text'), "*#{heading}*\nafter"
         refute_includes blocks.first.dig('text', 'text'), '```diff'
       end
-      assert_equal "*本文*\n(empty)", formatter.updated_body_blocks('本文', 'before', '').first.dig('text', 'text')
+      assert_equal "*Body*\n(empty)", formatter.updated_body_blocks('Body', 'before', '').first.dig('text', 'text')
     end
   end
 
@@ -4208,7 +4324,7 @@ class BodyDiffNotificationTest < Minitest::Test
     before = (1..20).map { |number| "unchanged #{number}" }
     after = before.dup
     after[9] = '**new value**'
-    block = Slackmine::Formatter.body_diff_blocks('説明', before.join("\n"), after.join("\n")).first
+    block = Slackmine::Formatter.body_diff_blocks('Description', before.join("\n"), after.join("\n")).first
 
     assert_equal 'markdown', block['type']
     assert_includes block['text'], '```diff'
@@ -4239,7 +4355,7 @@ class BodyDiffNotificationTest < Minitest::Test
     assert_equal '#6D5DFB', message.dig('attachments', 0, 'color')
     assert_includes diff.fetch('text'), '- old text'
     assert_includes diff.fetch('text'), '+ new text'
-    refute blocks.any? { |block| block['type'] == 'section' && block.dig('text', 'text').to_s.include?('変更後のコメント') }
+    refute blocks.any? { |block| block['type'] == 'section' && block.dig('text', 'text').to_s.include?('Updated comment') }
   end
 
   def test_edited_issue_comment_can_show_updated_text_instead_of_diff
@@ -4287,19 +4403,19 @@ class BodyDiffNotificationTest < Minitest::Test
   end
 
   def test_body_diff_handles_code_fences_and_slack_markdown_budget
-    block = Slackmine::Formatter.body_diff_blocks('本文', '```old', '```new').first
+    block = Slackmine::Formatter.body_diff_blocks('Body', '```old', '```new').first
     assert_includes block['text'], '````diff'
 
     existing = [{ 'type' => 'markdown', 'text' => 'x' * 11_800 }]
-    fallback = Slackmine::Formatter.body_diff_blocks('本文', 'old', 'new', blocks: existing).first
+    fallback = Slackmine::Formatter.body_diff_blocks('Body', 'old', 'new', blocks: existing).first
     assert_equal 'section', fallback['type']
     assert_operator fallback.dig('text', 'text').length, :<, 3_000
   end
 
   def test_body_diff_handles_empty_and_normalized_line_endings
     formatter = Slackmine::Formatter
-    assert_empty formatter.body_diff_blocks('本文', "same\r\nline", "same\nline")
-    removed = formatter.body_diff_blocks('本文', "old\ntext", '').first['text']
+    assert_empty formatter.body_diff_blocks('Body', "same\r\nline", "same\nline")
+    removed = formatter.body_diff_blocks('Body', "old\ntext", '').first['text']
     assert_includes removed, '- old'
     assert_includes removed, '- text'
     refute_includes removed, '+ old'
@@ -4308,7 +4424,7 @@ class BodyDiffNotificationTest < Minitest::Test
   def test_body_diff_truncates_large_changes_without_exceeding_limit
     before = (1..600).map { |number| "old #{number}" }.join("\n")
     after = (1..600).map { |number| "new #{number}" }.join("\n")
-    block = Slackmine::Formatter.body_diff_blocks('本文', before, after).first
+    block = Slackmine::Formatter.body_diff_blocks('Body', before, after).first
     assert_operator block['text'].length, :<, 6_000
     assert_includes block['text'], 'Diff truncated.'
   end

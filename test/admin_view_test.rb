@@ -42,7 +42,7 @@ class AdminViewTest < Minitest::Test
   end
 
   def render_tab(tab, assigns = {})
-    labels = YAML.safe_load(File.read(File.expand_path('../config/locales/slackmine_admin.ja.yml', __dir__))).fetch('ja')
+    labels = YAML.safe_load(File.read(File.expand_path('../config/locales/slackmine_admin.en.yml', __dir__))).fetch('en')
     lookup = ActionView::LookupContext.new([File.expand_path('../app/views', __dir__)])
     view = View.new(lookup, {
       tab: tab, scope_project: nil, scope_projects: [['<script>project</script>', 1]],
@@ -67,7 +67,7 @@ class AdminViewTest < Minitest::Test
       test_channel: 'C123', test_ready: true)
     document = Nokogiri::HTML(html)
     assert_includes html, 'SlackmineTestNotificationJob'
-    assert_includes html, '最大7日'
+    assert_includes html, 'up to seven days'
     form = document.at_css('form[action="/admin/slackmine/test_notification"]')
     assert_equal 'post', form['method']
     assert_equal 'C123', form.at_css('input[name=expected_channel]')['value']
@@ -76,7 +76,7 @@ class AdminViewTest < Minitest::Test
   end
 
   def test_changed_messages_are_bold_regardless_of_length
-    html = render_tab('settings', settings: {'messages' => {'commands' => {'help' => "A long message " * 20, 'save' => '保存'}}})
+    html = render_tab('settings', settings: {'messages' => {'commands' => {'help' => "A long message " * 20, 'save' => 'Save changes'}}})
     rows = Nokogiri::HTML(html).css('tbody tr')
     assert_nil rows.first.at_css('td:first-child strong code')
     assert rows.first.at_css('td:last-child strong')
@@ -87,12 +87,12 @@ class AdminViewTest < Minitest::Test
     html = render_tab('settings', settings: {'slack' => {'work_object_buttons' => {'add_comment' => false, 'edit_issue' => true},
       'metadata' => {'issue' => {'custom_fields' => {'42' => false}}}},
       'messages' => {'colors' => {'issue' => {'created' => '#123456'}}}})
-    assert_includes html, '通知: true／詳細: false'
-    assert_includes html, '通知: false／詳細: true'
-    assert_includes html, 'defaultを継承（省略時true）'
-    assert_includes html, 'チケットの作成イベントの通知色'
-    refute_includes html, '条件に依存'
-    assert_includes html, '設定を指定すると、省略したボタンはfalse'
+    assert_includes html, 'Notification: true; detail: false'
+    assert_includes html, 'Notification: false; detail: true'
+    assert_includes html, 'Inherits default (true when omitted)'
+    assert_includes html, 'Notification color for issue creation events'
+    refute_includes html, 'Context-dependent'
+    assert_includes html, 'When configured, omitted buttons are false'
   end
 
   def test_event_colors_have_a_visible_section_and_safe_read_only_swatches
@@ -120,7 +120,7 @@ class AdminViewTest < Minitest::Test
         refute_includes html, '<script>'
         assert_includes html, 'name="scope_project_id"'
         assert_includes html, '<em class="info">'
-        assert_includes html, 'Slack APIのBot Token'
+        assert_includes html, 'Slack Bot Token'
       end
     end
   end
@@ -128,8 +128,8 @@ class AdminViewTest < Minitest::Test
   def test_explanations_show_file_policy_and_email_mapping_distinctions
     html = render_tab('settings', settings: { 'slack' => { 'files' => { 'force_restrict_transfer' => true },
                                                         'auto_map_users_by_email' => true } })
-    assert_includes html, 'プロジェクト側で解除できません'
-    assert_includes html, '送信・管理画面のユーザー表示にも使います'
+    assert_includes html, 'Project overrides cannot disable it'
+    assert_includes html, 'outgoing and admin display identities'
   end
 
   def test_project_table_uses_routing_and_preserves_closed_status
@@ -148,21 +148,21 @@ class AdminViewTest < Minitest::Test
     users = [OpenStruct.new(id: 1, name: 'Alice', login: 'alice', mail: 'alice@example.com'),
              OpenStruct.new(id: 2, name: 'Bob', login: 'bob', mail: 'bob@example.com')]
     html = render_tab('users', users: users, mentions: { 1 => 'U123', 2 => nil }, match_methods: { 1 => :email }, user_mapping: { 'old-account' => 'UOLD' })
-    assert_includes html, '照合方法'
-    assert_includes html, 'メールアドレス一致'
+    assert_includes html, 'Match method'
+    assert_includes html, 'Email match'
     assert_includes html, '&lt;@U123&gt;'
-    assert_includes html, '対応なし'
+    assert_includes html, 'Unmapped'
     assert_includes html, 'old-account'
     assert_includes html, 'UOLD'
     assert_includes html, 'name="mapping_filter"'
-    assert_includes html, '対応あり'
-    assert_includes html, 'すべて'
+    assert_includes html, 'Mapped'
+    assert_includes html, 'All'
   end
 
   def test_missing_configuration_warning_and_empty_filtered_list
     html = render_tab('users', users: [], mentions: {}, user_mapping: {}, mapping_filter: 'mapped',
                               missing_configuration: ['slackmine.yml', 'slackmine.messages.yml'])
-    assert_includes html, '実設定ファイルが見つかりません'
+    assert_includes html, 'Configuration files are missing'
     assert_includes html, 'slackmine.messages.yml'
     assert_includes html, 'class="nodata"'
     assert_includes html, 'selected="selected" value="mapped"'
@@ -171,7 +171,7 @@ class AdminViewTest < Minitest::Test
   def test_settings_move_values_right_and_mark_only_changes
     html = render_tab('settings', settings: {'slack' => {'work_object_actions' => true, 'thread_comments' => false}})
     document = Nokogiri::HTML(html)
-    assert_equal ['設定キー', 'デフォルト値', '現在値'], document.css('table th').map(&:text)
+    assert_equal ['Setting key', 'Default value', 'Current value'], document.css('table th').map(&:text)
     changed = document.css('tbody tr').select { |row| row.at_css('td:last-child strong') }
     assert_equal 1, changed.length
     assert_includes changed.first.text, 'slack.work_object_actions'

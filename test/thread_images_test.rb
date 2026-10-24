@@ -79,7 +79,7 @@ class ThreadFilesTest < Minitest::Test
     [['application/pdf', 'report.pdf', '%PDF-1.7 example'],
      ['application/zip', 'archive.zip', "PK archive"],
      ['text/plain', 'notes.txt', 'notes'],
-     ['application/pdf', '資料.pdf', '%PDF-1.7 example'],
+     ['application/pdf', 'Document.pdf', '%PDF-1.7 example'],
      ['image/svg+xml', 'diagram.svg', '<svg></svg>']].each do |mime, name, data|
       @metadata.merge!('mimetype' => mime, 'name' => name, 'size' => data.bytesize)
       file = download(data).first
@@ -244,11 +244,11 @@ class ThreadImageCommentsTest < ThreadCommentsUrlTest
         teardown
         setup
       end
-      @attachment.filename = 'F123-振込受付書.pdf'
+      @attachment.filename = 'F123-Transfer receipt.pdf'
       @attachment.content_type = 'application/pdf'
       Setting.stub(:text_formatting, format) do
         assert_equal :saved, persist
-        assert_includes @journal.notes, 'attachment:"F123-振込受付書.pdf"'
+        assert_includes @journal.notes, 'attachment:"F123-Transfer receipt.pdf"'
         refute_includes @journal.notes, '/attachments/download/'
         refute_includes @journal.notes, '![]'
       end

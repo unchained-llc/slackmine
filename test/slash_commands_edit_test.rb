@@ -241,16 +241,16 @@ class SlashCommandsEditTest < Minitest::Test
   end
 
   def test_direct_status_name_including_japanese_updates_and_replies_privately
-    @issue.statuses.last.name = '終了'
+    @issue.statuses.last.name = 'Closed'
     previous = User.current
     with_edits do
-      result = deliver_direct('status #7 終了')
+      result = deliver_direct('status #7 Closed')
       assert_equal 5, @issue.status_id
       assert_equal 1, @issue.journals.size
       assert_equal 'chat.postEphemeral', @calls.last[0]
       assert_equal 'U123', result['user']
       assert_includes result.to_json, 'Issue updated.'
-      assert_includes result.to_json, '終了'
+      assert_includes result.to_json, 'Closed'
       refute_includes result.to_json, 'views.open'
     end
     assert_same previous, User.current

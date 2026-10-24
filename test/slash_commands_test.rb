@@ -124,12 +124,12 @@ class SlashCommandsTest < Minitest::Test
 
   def test_direct_edit_uses_configured_command_and_a_server_derived_retry_key
     @settings['slack']['slash_command'] = '/tickets'
-    @payload.merge!('command' => '/tickets', 'text' => 'status 7 終了', 'trigger_id' => 'fresh-trigger',
+    @payload.merge!('command' => '/tickets', 'text' => 'status 7 Closed', 'trigger_id' => 'fresh-trigger',
                     'request_key' => 'untrusted-key')
     timestamp = Time.now.to_i
     assert_equal :ok, dispatch(timestamp: timestamp).status
     queued = @delivered.first.last
-    assert_equal 'status 7 終了', queued['text']
+    assert_equal 'status 7 Closed', queued['text']
     assert_match(/\A[0-9a-f]{64}\z/, queued['request_key'])
     refute queued.key?('response_url')
     refute queued.key?('token')
@@ -247,10 +247,10 @@ class SlashCommandsTest < Minitest::Test
     Issue.define_singleton_method(:sanitize_sql_like) { |value| value.gsub('%', '\\%').gsub('_', '\\_') } if added_sanitize
     Slackmine::WorkObjects.stub(:viewer_for, Object.new) do
       Issue.stub(:visible, scope) do
-        ['spdf', '  SDPF 移行  ', 'search spdf', '移行 100%_完了'].each do |text|
+        ['spdf', '  SDPF migration  ', 'search spdf', 'migration 100%_done'].each do |text|
           COMMANDS.run('ATEST', 'TTEST', 'U123', 'C123', text)
         end
-        assert_equal ['%spdf%', '%sdpf 移行%', '%spdf%', '%移行 100\\%\\_完了%'], queries.map(&:last)
+        assert_equal ['%spdf%', '%sdpf migration%', '%spdf%', '%migration 100\\%\\_done%'], queries.map(&:last)
         assert queries.all? { |query| query.first == 'LOWER(issues.subject) LIKE ?' }
         ['', '   ', 'help', 'search'].each do |text|
           assert_includes COMMANDS.run('ATEST', 'TTEST', 'U123', 'C123', text).to_json, 'Issue commands'

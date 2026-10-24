@@ -509,8 +509,8 @@ class NotificationCoalescingTest < Minitest::Test
     refute_includes JSON.generate(@calls), '_slackmine_'
   end
 
-  def test_creation_comment_and_due_date_change_remain_in_the_japanese_heading
-    @settings['messages'] = YAML.safe_load(File.read(File.expand_path('../config/slackmine.messages.ja.yml.example', __dir__))).fetch('messages')
+  def test_creation_comment_and_due_date_change_remain_in_the_configured_heading
+    @settings['messages'] = YAML.safe_load(File.read(File.expand_path('../config/slackmine.messages.yml.example', __dir__))).fetch('messages')
     @settings['slack']['work_object_previews'] = true
     @settings['slack']['work_object_fields'] = { 'status' => true, 'due_date' => true }
     actor, issue = formatted_fixture
@@ -529,12 +529,12 @@ class NotificationCoalescingTest < Minitest::Test
     assert_equal %w[chat.postMessage chat.update], @calls.map(&:first)
     first = @calls.first[1].dig('attachments', 0, 'blocks')
     blocks = @calls.last[1].dig('attachments', 0, 'blocks')
-    assert_equal '🆕 Kota *チケットを作成*', first.first.dig('text', 'text')
-    assert_equal '🔄 Kota *チケットを作成 ＋ コメントを追加 ＋ 期日変更*', blocks.first.dig('text', 'text')
+    assert_equal '🆕 Kota *Issue created*', first.first.dig('text', 'text')
+    assert_equal '🔄 Kota *Issue created ＋ Comment added ＋ Due date changed*', blocks.first.dig('text', 'text')
     # Only the heading changes; creation content still precedes the comment.
     assert_equal first[1], blocks[1]
     assert_includes blocks[3].dig('text', 'text'), 'Recovery confirmed'
-    assert_includes JSON.generate(blocks), '2026-10-26 → なし'
+    assert_includes JSON.generate(blocks), '2026-10-26 → None'
     refute @calls.last[1].dig('metadata', 'entities', 0, 'entity_payload', 'fields').key?('due_date')
     refute_includes JSON.generate(@calls), '_slackmine_'
   end

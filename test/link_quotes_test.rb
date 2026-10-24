@@ -37,7 +37,7 @@ class LinkQuotesTest < Minitest::Test
   end
 
   def test_normal_text_skips_formatter_and_slack_lookup
-    source = '普通のコメント'
+    source = 'Regular comment'
     Redmine::WikiFormatting.stub(:to_html, ->(*) { flunk 'no Slack URL to format' }) do
       assert_equal source, import(source)
     end
@@ -427,8 +427,8 @@ class LinkQuotesTest < Minitest::Test
     assert_equal 'comment quote', journal.notes
   end
   def test_plain_mail_and_slack_notifications_hide_storage_markers
-    @card['author'] = '投稿者'
-    @card['text'] = 'Unique searchable wording 日本語'
+    @card['author'] = "Author \u65e5\u672c\u8a9e"
+    @card['text'] = "Unique searchable wording \u65e5\u672c\u8a9e"
     quote = Q.encode(@card, URL).dup.force_encoding(Encoding::ASCII_8BIT)
     html_part = OpenStruct.new(mime_type: 'text/html', body: OpenStruct.new(decoded: '<p>HTML</p>'))
     text_part = OpenStruct.new(mime_type: 'text/plain', body: OpenStruct.new(decoded: quote))

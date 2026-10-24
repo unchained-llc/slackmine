@@ -38,7 +38,7 @@ class LinkCardsHelperTest < Minitest::Test
                'thread_connection_nonce' => 'a' * 32 }
       Slackmine::LinkQuotes.encode(card, LinkCardsTest::URL.sub('755579', "75557#{index}"))
     end
-    source = "Slackスレッドから取り込み（接続前の会話）\n\n" + cards.join("\n\n")
+    source = "Imported Slack thread history\n\n" + cards.join("\n\n")
     @issue.define_singleton_method(:description) { @description }
     @issue.instance_variable_set(:@description, source)
     %w[issues mailer].each do |surface|
@@ -348,7 +348,7 @@ class LinkCardsHelperTest < Minitest::Test
   def test_link_text_is_shared_by_web_and_mail_and_escaped
     card = { 'author' => 'Example', 'channel' => 'example', 'text' => 'Message' }
     [nil, '<img class="slackmine-mail-icon" src="slackmine-bundled-logo.png">'].each do |icon|
-      ['Slackで開く', '<script> & "quoted"', nil, '', '  ', false].each do |value|
+      ['Open in Slack', '<script> & "quoted"', nil, '', '  ', false].each do |value|
         Slackmine.stub(:effective_config, { 'slack' => { 'link_cards' => { 'link_text' => value } } }) do
           html = Slackmine::LinkCards.render_card(card, LinkCardsTest::URL, @issue.project, icon_html: icon)
           doc = Nokogiri::HTML.fragment(html)
@@ -454,7 +454,7 @@ class LinkCardsHelperTest < Minitest::Test
   def test_ajax_update_matches_page_reload_with_cards_at_url_positions
     url = LinkCardsTest::URL
     card = { 'author' => 'Example', 'channel' => 'example', 'timestamp' => '2026-10-05T00:00:00Z', 'text' => 'Saved message' }
-    source = "#{url}\nって返した\n\n#{Slackmine::LinkQuotes.encode(card, url)}"
+    source = "#{url}\nwas the reply\n\n#{Slackmine::LinkQuotes.encode(card, url)}"
     journal = Journal.new
     journal.define_singleton_method(:journalized) { @issue }
     journal.instance_variable_set(:@issue, @issue)
@@ -473,7 +473,7 @@ class LinkCardsHelperTest < Minitest::Test
           doc = Nokogiri::HTML.fragment(ajax)
           assert_equal 1, doc.css('.slackmine-link-card').size
           assert_equal ['Open in Slack'], doc.css('a').map(&:text)
-          assert_operator doc.text.index('Saved message'), :<, doc.text.index('って返した')
+          assert_operator doc.text.index('Saved message'), :<, doc.text.index('was the reply')
           refute_includes ajax, '[slack-quote:'
         end
       end

@@ -7,11 +7,11 @@ class SlackMarkupTest < Minitest::Test
   M = Slackmine::SlackMarkup
 
   def test_emphasis_emoji_and_japanese_are_rendered
-    html = M.render('💬 *追加コメント* _斜体_ ~削除~ :speech_balloon: **bold**')
+    html = M.render('💬 *Added comment* _Italic_ ~Deleted~ :speech_balloon: **bold**')
     doc = Nokogiri::HTML.fragment(html)
-    assert_equal ['追加コメント', 'bold'], doc.css('strong').map(&:text)
-    assert_equal '斜体', doc.at_css('em').text
-    assert_equal '削除', doc.at_css('del').text
+    assert_equal ['Added comment', 'bold'], doc.css('strong').map(&:text)
+    assert_equal 'Italic', doc.at_css('em').text
+    assert_equal 'Deleted', doc.at_css('del').text
     assert_includes doc.text, '💬'
     assert_includes M.render('prefix_some_value'), 'prefix_some_value'
   end

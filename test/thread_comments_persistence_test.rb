@@ -572,7 +572,7 @@ class ThreadCommentsPersistenceTest < Minitest::Test
   def test_processing_fetches_only_parent_and_does_not_post_feedback_twice
     cleanups = []
     @settings['messages'] = { 'work_objects' => { 'product_name' => 'Example Tracker' },
-                              'thread_comments' => { 'saved' => '✅ %{product_name} #%{id} にコメントを追加しました。' } }
+                              'thread_comments' => { 'saved' => '✅ Added a comment to %{product_name} #%{id}.' } }
     calls = []
     api = ->(method, body, token, **_options) do
       calls << [method, body, token]
@@ -599,7 +599,7 @@ class ThreadCommentsPersistenceTest < Minitest::Test
     assert_equal 1, calls.count { |call| call[0] == 'chat.postMessage' }
     assert_equal [[@issue.project, @event, { 'ts' => '1791001000.000004' }]], cleanups
     feedback = calls.find { |call| call[0] == 'chat.postMessage' }
-    assert_equal "✅ Example Tracker <https://redmine.example.com/issues/#{@issue.id}|##{@issue.id}> にコメントを追加しました。", feedback[1]['text']
+    assert_equal "✅ Added a comment to Example Tracker <https://redmine.example.com/issues/#{@issue.id}|##{@issue.id}>.", feedback[1]['text']
     history = calls.first[1]
     assert_equal @event['thread_ts'], history['oldest']
     assert_equal @event['thread_ts'], history['latest']

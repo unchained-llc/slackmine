@@ -189,7 +189,7 @@ class AppHomeTest < Minitest::Test
       assert_equal edit_label, row[4].dig('fallback', 'text')
       refute edit.key?('url')
     end
-    @issue.subject = '長' * 300
+    @issue.subject = "\u9577" * 300
     blocks.clear
     HOME.add_group(blocks, 'my', [@issue])
     assert_equal 200, blocks.last['rows'][1][0].dig('elements', 0, 'elements', 0, 'text').length

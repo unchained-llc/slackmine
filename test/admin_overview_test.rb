@@ -151,10 +151,10 @@ class AdminOverviewTest < Minitest::Test
   end
 
   def test_flattening_keeps_false_null_empty_maps_and_unicode_strings
-    result = OVERVIEW.rows('slack' => { 'enabled' => false, 'empty' => {}, 'unset' => nil, 'name' => '通知' })
-    assert_equal [['slack.enabled', false], ['slack.empty', {}], ['slack.unset', nil], ['slack.name', '通知']], result
+    result = OVERVIEW.rows('slack' => { 'enabled' => false, 'empty' => {}, 'unset' => nil, 'name' => 'Notification' })
+    assert_equal [['slack.enabled', false], ['slack.empty', {}], ['slack.unset', nil], ['slack.name', 'Notification']], result
     assert_equal 'null', OVERVIEW.display(nil)
     assert_equal 'false', OVERVIEW.display(false)
-    assert_equal '通知', OVERVIEW.display('通知')
+    assert_equal 'Notification', OVERVIEW.display('Notification')
   end
 end

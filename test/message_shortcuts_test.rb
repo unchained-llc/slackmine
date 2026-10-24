@@ -140,7 +140,7 @@ class MessageShortcutsTest < Minitest::Test
   end
 
   def test_long_multibyte_message_preserves_source_link_within_input_limit
-    @payload['message']['text'] = 'あ' * 4000
+    @payload['message']['text'] = "\u3042" * 4000
     with_context do
       view = creation_view(open_picker)['view']
       description = view['blocks'].find { |b| b['block_id'] == 'description' }.dig('element', 'initial_value')

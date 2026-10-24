@@ -134,7 +134,7 @@ class StandardNotificationsTest < Minitest::Test
                    japanese_values.fetch(key).to_s.scan(/%\{[^}]+\}/).sort, key
     end
     assert_equal 'Redmine', japanese.dig('work_objects', 'product_name')
-    assert_empty default_values.select { |_, value| value.to_s.match?(/[ぁ-んァ-ヶ一-龠]/) }
+    assert_empty default_values.select { |_, value| value.to_s.match?(/[\u3041-\u3093\u30a1-\u30f6\u4e00-\u9fa0]/) }
   end
 
   def test_message_file_prefers_redmine_config_path

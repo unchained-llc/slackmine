@@ -632,12 +632,15 @@ module Slackmine
     return unless issue.is_a?(Issue) && !issue.is_private?
     return if journal&.private_notes?
 
-    source_attachments = journal ? journal.attachments : issue.attachments
+    # Editing an older comment can reference files added to the issue later.
+    # Prefer the journal's own attachment when filenames collide.
+    source_attachments = issue.attachments.to_a
+    source_attachments += journal.attachments.to_a if journal
     attachments = source_attachments.each_with_object({}) { |attachment, indexed| indexed[attachment.filename.downcase] = attachment }
     blocks = payload['blocks'] || payload.dig('attachments', 0, 'blocks')
     return unless blocks
 
-    eligible_names = image_names.to_h { |name| [name.downcase, name] }
+    eligible_names = image_names.map { |name| Formatter.image_reference_name(name) }.compact.to_h { |name| [name.downcase, name] }
     upload_results = {}
     ordered_blocks = blocks.flat_map do |block|
       markdown_block = block['type'] == 'markdown'
@@ -656,7 +659,7 @@ module Slackmine
       content.to_enum(:scan, /!\[[^\]\n]*\]\(([^)\n]+)\)/i).each do
         match = Regexp.last_match
         current_text << content[cursor...match.begin(0)]
-        name = eligible_names[match[1].downcase]
+        name = eligible_names[Formatter.image_reference_name(match[1])&.downcase]
         if name
           found_eligible = true
           attachment = attachments[name.downcase]
