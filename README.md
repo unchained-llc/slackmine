@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.7.4**.
+Version **1.7.5**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -501,7 +501,7 @@ slack:
 
 Fields and buttons embedded in previously posted cards do not update automatically; those messages need a new notification or an in-place update. The detail pane fetches the current issue whenever it opens.
 
-Edit issue includes a picker with assignable Redmine users and an unassigned option. The detail pane also exposes permitted assignee, status, priority, and due date edits and a blank comment input. Assign to me makes no change if the viewer already owns the issue. The modal lists assignable users and an unassigned option when the list has at most 99 users. Every submission rechecks the Slack-to-Redmine user mapping, issue visibility, edit and note permissions, status workflow, active priorities, and assignable users before writing to Redmine. After an edit, the plugin refreshes the originating card or detail pane with the latest issue state. A Slack API failure during card refresh is logged without retrying an already saved Redmine change.
+Edit issue includes the current subject (required, up to 255 characters), description, and a picker with assignable Redmine users and an unassigned option, according to edit permissions. Subject changes use the normal Redmine journal and refresh the card title after saving. The detail pane also exposes permitted assignee, status, priority, and due date edits and a blank comment input. Assign to me makes no change if the viewer already owns the issue. The modal lists assignable users and an unassigned option when the list has at most 99 users. Every submission rechecks the Slack-to-Redmine user mapping, issue visibility, edit and note permissions, status workflow, active priorities, and assignable users before writing to Redmine. After an edit, the plugin refreshes the originating card or detail pane with the latest issue state. A Slack API failure during card refresh is logged without retrying an already saved Redmine change.
 
 The Work Object's conversation view is separate from Redmine's comment history. Existing Redmine comments are not displayed there. For issues with actions enabled, a new Redmine comment can be added from the detail pane's edit form. Posting comments from notification threads is available through the following setting.
 
@@ -1325,6 +1325,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.5** | Add the current subject to the Slack issue edit modal. Save subject changes with permission checks and Redmine history, and refresh the card title. |
 | **1.7.4** | Display newly referenced images in comment diff notifications, including URL-encoded filenames and files attached after the comment was created. Do not repeat unchanged images when only text is edited. |
 | **1.7.3** | Accept Redmine issue URLs as well as issue numbers when connecting Slack threads, including URLs with query parameters or comment anchors. |
 | **1.7.2** | Link added attachment filenames and issue attachment metadata to their Redmine attachment pages in Slack notifications. |

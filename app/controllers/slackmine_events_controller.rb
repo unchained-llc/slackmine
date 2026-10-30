@@ -77,7 +77,7 @@ class SlackmineEventsController < ActionController::Base
         # The watch confirmation has no input blocks; Slack may omit state.
         values = {} if values.nil? && source['type'] == 'modal' && source['callback_id'] == 'slackmine_watch_settings'
         return head :bad_request unless values.is_a?(Hash)
-        interaction['view']['state'] = { 'values' => values.slice('status', 'priority', 'assignee', 'due_date', 'new_comment', 'description') }
+        interaction['view']['state'] = { 'values' => values.slice('subject', 'status', 'priority', 'assignee', 'due_date', 'new_comment', 'description') }
       end
       # The signed request can be redelivered while this Web process is still
       # saving or refreshing Slack. Claim it before any write, using only a hash

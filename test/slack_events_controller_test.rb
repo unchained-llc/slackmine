@@ -367,6 +367,7 @@ class SlackEventsControllerTest < Minitest::Test
       modal = card.merge('type' => 'view_submission', 'view' => {
         'type' => 'modal', 'callback_id' => 'slackmine_edit_issue', 'private_metadata' => '{}',
         'state' => { 'values' => {
+          'subject' => { 'subject' => { 'value' => 'Updated subject' } },
           'priority' => { 'priority' => { 'selected_option' => { 'value' => '5' } } },
           'assignee' => { 'assignee' => { 'selected_option' => { 'value' => '3' } } },
           'due_date' => { 'due_date' => { 'selected_date' => '2026-10-12' } },
@@ -376,6 +377,7 @@ class SlackEventsControllerTest < Minitest::Test
       })
       assert_equal :ok, dispatch(raw: URI.encode_www_form('payload' => JSON.generate(modal))).status
       values = handled.last[2].dig('view', 'state', 'values')
+      assert_equal 'Updated subject', values.dig('subject', 'subject', 'value')
       assert_equal '5', values.dig('priority', 'priority', 'selected_option', 'value')
       assert_equal '3', values.dig('assignee', 'assignee', 'selected_option', 'value')
       assert_equal '2026-10-12', values.dig('due_date', 'due_date', 'selected_date')

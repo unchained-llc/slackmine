@@ -3032,6 +3032,7 @@ class WorkObjectDetailsTest < Minitest::Test
       self.priority = IssuePriority.active.find { |priority| priority.id == priority_id } if attrs['priority_id']
       self.due_date = attrs['due_date'].empty? ? nil : Date.iso8601(attrs['due_date']) if attrs.key?('due_date')
       self.description = attrs['description'] if attrs.key?('description')
+      self.subject = attrs['subject'] if attrs.key?('subject')
     end
     @issue.define_singleton_method(:init_journal) do |_viewer, note|
       (@events ||= []) << :journal
@@ -3368,6 +3369,77 @@ class WorkObjectDetailsTest < Minitest::Test
     assert_empty capture_interaction(button)
   end
 
+  def test_subject_modal_saves_with_journal_and_refreshes_card_title
+    prepare_action_issue
+    original = @issue.subject
+    click = action_payload('block_actions', 'container', 'actions' => [{ 'action_id' => 'slackmine_edit_issue' }])
+    click['container'].merge!('type' => 'message_attachment', 'channel_id' => 'C123', 'message_ts' => '123.456')
+    form = capture_interaction(click).first[1]['view']
+    field = form['blocks'].first
+    assert_equal 'subject', field['block_id']
+    assert_equal original, field.dig('element', 'initial_value')
+    assert_equal 255, field.dig('element', 'max_length')
+    refute field['optional']
+    submission = action_payload('view_submission', 'view')
+    submission['view'] = form.merge('state' => { 'values' => {
+      'subject' => { 'subject' => { 'value' => '家具の発注・設置を進める' } }
+    } })
+    calls = capture_interaction(submission)
+    assert_equal '家具の発注・設置を進める', @issue.subject
+    assert_equal [:journal, :attributes], @issue.events
+    assert_equal @issue.subject, calls.last[1].dig('metadata', 'entities', 0, 'entity_payload', 'attributes', 'title', 'text')
+    capture_interaction(submission)
+    assert_equal [:journal, :attributes], @issue.events
+  end
+
+  def test_subject_edit_rejects_invalid_values_and_rechecks_permission
+    prepare_action_issue
+    original = @issue.subject
+    Slackmine.stub(:config, @settings) do
+      ['', '  ', 'あ' * 256, 42].each do |subject|
+        assert_equal :restricted, WORK.update_issue(@issue, @user, subject: subject, comment: 'Must not save')
+      end
+      @issue.define_singleton_method(:safe_attribute?) { |attribute, _| attribute != 'subject' }
+      refute WORK.edit_modal(@issue, @user, {})['blocks'].any? { |block| block['block_id'] == 'subject' }
+      assert_equal :restricted, WORK.update_issue(@issue, @user, subject: 'Forbidden')
+      @issue.define_singleton_method(:safe_attribute?) { |*| true }
+      @issue.define_singleton_method(:attributes_editable?) { |_| false }
+      assert_equal :restricted, WORK.update_issue(@issue, @user, subject: 'Forbidden')
+      assert_equal original, @issue.subject
+      assert_empty @issue.events
+      @issue.define_singleton_method(:attributes_editable?) { |_| true }
+      assert_equal :saved, WORK.update_issue(@issue, @user, subject: 'あ' * 255)
+    end
+  end
+
+  def test_subject_missing_value_preserves_title_and_comment_forms_ignore_subject
+    prepare_action_issue
+    original = @issue.subject
+    submission = action_payload('view_submission', 'view')
+    form = WORK.edit_modal(@issue, @user, submission['view'])
+    submission['view'] = form
+    [{}, { 'subject' => {} }, { 'unexpected' => { 'value' => 'Wrong' } }].each do |input|
+      form['state'] = { 'values' => { 'subject' => input } }
+      capture_interaction(submission)
+      assert_equal original, @issue.subject
+      assert_empty @issue.events
+    end
+    form['state'] = { 'values' => { 'subject' => { 'subject' => { 'value' => nil } } } }
+    capture_interaction(submission)
+    assert_equal original, @issue.subject
+    assert_empty @issue.events
+    %w[slackmine_add_comment slackmine_reply].each do |callback|
+      form['callback_id'] = callback
+      form['state'] = { 'values' => {
+        'subject' => { 'subject' => { 'value' => 'Must not change' } },
+        'new_comment' => { 'new_comment' => { 'value' => 'Only a comment' } }
+      } }
+      WORK.stub(:previous_assignee_id, nil) { capture_interaction(submission) }
+      assert_equal original, @issue.subject
+      assert_equal 'Only a comment', @issue.notes.last
+    end
+  end
+
   def test_description_edit_preserves_raw_text_and_saves_with_journal
     prepare_action_issue
     @issue.description = "  # Heading\n\nOriginal body\n "
@@ -3572,7 +3644,7 @@ class WorkObjectDetailsTest < Minitest::Test
     calls = capture_interaction(click)
     assert_equal ['views.open'], calls.map(&:first)
     modal = calls.first[1]['view']
-    assert_equal %w[description status priority assignee due_date new_comment], modal['blocks'].map { |block| block['block_id'] }
+    assert_equal %w[subject description status priority assignee due_date new_comment], modal['blocks'].map { |block| block['block_id'] }
     context = JSON.parse(modal['private_metadata'])
     assert_equal @url, context['entity_url']
     assert_equal @event['external_ref'], context['external_ref']
@@ -3747,6 +3819,20 @@ class NotificationDisplaySettingsTest < Minitest::Test
       cases.each do |old_value, value, expected|
         detail = OpenStruct.new(property: 'cf', prop_key: '42', old_value: old_value, value: value)
         assert_equal [['Customer ID', expected]], Slackmine::Formatter.change_fields(issue, [detail])
+      end
+    end
+  end
+
+  def test_subject_changes_show_both_journal_values_with_work_object_cards
+    issue = OpenStruct.new(id: 7, subject: 'Current subject', description: '',
+                           project: OpenStruct.new(name: 'Agentic'), tracker: OpenStruct.new(name: 'Task'))
+    detail = OpenStruct.new(property: 'attr', prop_key: 'subject', old_value: 'Old subject', value: 'New subject')
+    Slackmine.stub(:config, { 'slack' => { 'work_object_previews' => true } }) do
+      payloads = [Slackmine::Formatter.issue_payload(issue, actor: nil, action: 'updated', details: [detail]),
+                  Slackmine::Formatter.journal_payload(issue, actor: nil, notes: 'Comment', details: [detail])]
+      payloads.each do |payload|
+        fields = payload.dig('attachments', 0, 'blocks').flat_map { |block| block.fetch('fields', []) }
+        assert_includes fields.map { |field| field['text'] }, "*Subject*\nOld subject → New subject"
       end
     end
   end

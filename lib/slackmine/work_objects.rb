@@ -258,6 +258,12 @@ module Slackmine
 
       blocks = []
       blocks << Formatter.section_text(work_object_message('reply_hint')) if reply
+      if !comment_only && !assignee_only && issue.safe_attribute?('subject', viewer)
+        blocks << { 'type' => 'input', 'block_id' => 'subject',
+                    'label' => { 'type' => 'plain_text', 'text' => Formatter.field_label('subject') },
+                    'element' => { 'type' => 'plain_text_input', 'action_id' => 'subject',
+                                   'initial_value' => issue.subject.to_s, 'max_length' => 255 } }
+      end
       if !comment_only && !assignee_only && issue.safe_attribute?('description', viewer)
         if issue.description.to_s.length <= 3000
           element = { 'type' => 'plain_text_input', 'action_id' => 'description', 'multiline' => true, 'max_length' => 3000 }
@@ -521,6 +527,10 @@ module Slackmine
           due_date = values.dig('due_date', modal ? 'due_date' : 'due_date.input', 'selected_date')
           due_date = '' if values.key?('due_date') && due_date.nil?
           comment = values.dig('new_comment', modal ? 'new_comment' : 'new_comment.input', 'value')
+          subject_input = values.dig('subject', 'subject') if modal
+          subject = if subject_input.is_a?(Hash) && subject_input.key?('value')
+                      subject_input['value'].nil? ? '' : subject_input['value']
+                    end
           description_input = values.dig('description', modal ? 'description' : 'description.input')
           # Only an explicitly submitted value may clear the description.
           # A block without the expected input is not a request to erase it.
@@ -538,9 +548,10 @@ module Slackmine
             return if comment.to_s.strip.empty?
             status = priority = assignee = due_date = nil
             description = nil
+            subject = nil
           end
           outcome = update_issue(issue, viewer, assigned_to_id: assignee, status_id: status,
-                                 priority_id: priority, due_date: due_date, comment: comment, description: description, reply: reply)
+                                 priority_id: priority, due_date: due_date, comment: comment, description: description, subject: subject, reply: reply)
         end
         Rails.logger&.info("Slackmine: Work Object interaction issue=#{issue.id} result=#{outcome}")
         if modal || source['type'] == 'message_attachment'
@@ -646,7 +657,7 @@ module Slackmine
       target.id if target && target.active?
     end
 
-    def update_issue(issue, viewer, assigned_to_id: nil, status_id: nil, priority_id: nil, due_date: nil, comment: nil, description: nil, reply: false)
+    def update_issue(issue, viewer, assigned_to_id: nil, status_id: nil, priority_id: nil, due_date: nil, comment: nil, description: nil, subject: nil, reply: false)
       previous_user = User.current
       User.current = viewer
       issue.with_lock do
@@ -657,6 +668,11 @@ module Slackmine
           assigned_to_id = reply_assignee_id(issue, viewer)
         end
         attrs = {}
+        unless subject.nil?
+          next :restricted unless subject.is_a?(String) && subject.length.between?(1, 255) && !subject.strip.empty? &&
+                                  issue.attributes_editable?(viewer) && issue.safe_attribute?('subject', viewer)
+          attrs['subject'] = subject unless issue.subject.to_s == subject
+        end
         unless description.nil?
           next :restricted unless description.is_a?(String) && description.length <= 3000 && issue.description.to_s.length <= 3000 &&
                                   issue.attributes_editable?(viewer) && issue.safe_attribute?('description', viewer)
