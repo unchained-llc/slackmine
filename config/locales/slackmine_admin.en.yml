@@ -59,6 +59,7 @@ en:
     slack_slash_command: "Registered Slack slash command name, beginning with /. Disabled when omitted."
     slack_bot_token: "Slack Bot Token. Priority: project setting, SLACK_BOT_TOKEN, global setting. Values are masked."
     slack_default_channel_id: "Global fallback channel when explicit routing, parent inheritance and name matching do not resolve a destination. A project override is an explicit destination for that project."
+    slack_use_slack_avatars: "Use Slack profile images for Redmine web avatars site-wide. Requires users:read and a shared web/worker Rails cache. Defaults to false."
     slack_auto_map_users_by_name: "Mention a unique Slack username or display-name match for the Redmine login. Explicit mappings take precedence. When name and email matching are both enabled, their YAML order determines priority."
     slack_auto_map_users_by_email: "Authorize Work Objects and thread replies by a unique registered email match. Also resolves outgoing and admin display identities. When name and email matching are both enabled, their YAML order determines priority. Mention notifications are enabled separately."
     slack_auto_map_channels_by_name: "Match project identifiers to Bot-member channel names, case-insensitively with spaces replaced by hyphens. Explicit destinations take precedence."

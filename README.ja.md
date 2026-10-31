@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **1.7.7**。
+バージョン **1.8.0**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -30,6 +30,7 @@ Redmine 7 の Issue、Wiki、News、文書、ファイル、フォーラム、�
 | [期日リマインダー](#毎日の期日リマインダー-dm) | 担当する未完了チケットの期限超過・設定期間内の期日をSlack DMでまとめて通知。定期実行は別途設定します。 |
 | [App Homeのチケット一覧](#app-homeのチケット一覧) | 自分が更新した・今週期限・担当している・報告した未完了チケットを5列表で表示。フィルター変更で自動更新し、題名からRedmineを開き、編集ボタンから権限内で編集・コメント追加。 |
 | [ユーザーの対応付け](#担当者のメンション) | RedmineユーザーとSlack IDの明示的な対応付け、送信時の名前マッチング、任意の[受信操作時のメールアドレス照合](#メールアドレスで閲覧ユーザーを自動対応付けする)。操作時にはRedmineの権限とワークフローを確認します。 |
+| [Slackアバターの表示](#slackアバターの表示) | 対応付けたユーザーのSlackプロフィール画像をRedmineのアバターとして表示できます。初期値OFF。画像を使えない場合は従来の表示に戻ります。 |
 | [個人ごとの通知メール抑止](#個人ごとの通知メール設定) | Slack通知設定とチャンネル参加が条件を満たす場合、本人が対象の通知メールを停止できます。アカウント・セキュリティ関連メールは継続し、Slackの配信成功は確認しません。 |
 | [管理画面](#管理画面の設定対応一覧) | 実効設定・イベント色・プロジェクト通知先・ユーザーメンションを確認。キュー監視・実行履歴・テスト通知はSidekiq使用時のみ利用できます。 |
 
@@ -67,7 +68,7 @@ Work Objectのプレビュー・操作、スラッシュコマンド、スレッ
 | [`im:write`](https://docs.slack.dev/reference/scopes/im.write/) | 期日リマインダーのDM送信 |
 | [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) | Redmineの添付画像をSlack通知にアップロード |
 | [`files:read`](https://docs.slack.dev/reference/scopes/files.read/) | Slackスレッドの添付ファイルをRedmineへ取り込み |
-| [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | 名前での自動対応付け、Bot宛てメンションの除外、リンクカードの投稿者・メンション表示 |
+| [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | 名前での自動対応付け、Slackアバター、Bot宛てメンションの除外、リンクカードの投稿者・メンション表示 |
 | [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) ＋ [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | メールアドレスでのユーザー対応付け、個人のメール抑止で自動マッチングを使用 |
 | [`channels:history`](https://docs.slack.dev/reference/scopes/channels.history/) / [`groups:history`](https://docs.slack.dev/reference/scopes/groups.history/) | 公開 / 非公開チャンネルの履歴取得：コメントのスレッド通知、返信取り込み・まとめ保存、Slackリンクカード |
 | [`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/) / [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/) | 公開 / 非公開チャンネルの情報取得：名前での自動対応付け、メール抑止の参加確認、Slackリンクカード |
@@ -79,6 +80,7 @@ Work Objectのプレビュー・操作、スラッシュコマンド、スレッ
 
 | 機能 | 必要なSlack権限 | Slack側での追加設定 | YAML・運用上の要件 |
 | --- | --- | --- | --- |
+| [Slackアバターの表示](#slackアバターの表示) | [`users:read`](https://docs.slack.dev/reference/scopes/users.read/)、メール照合には [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) も必要 | — | `slack.use_slack_avatars: true`、ユーザーの対応付け、Web・ワーカーで共有するRailsキャッシュ |
 | 通常のチャンネル通知 | [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) | Botを通知先へ招待 | Bot Token、通知先チャンネル、`slack` キューワーカー |
 | [Issueの画像表示](#issue-の画像表示) | [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) | — | Redmineに添付された対応画像 |
 | [担当者のメンション](#担当者のメンション) | 明示的な対応付けなら追加不要。名前の自動照合は [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | — | `users` または `slack.auto_map_users_by_name: true` |
@@ -160,6 +162,14 @@ projects:
         issue:
           created: 'New Agentic issue'
 ```
+
+## Slackアバターの表示
+
+![担当者とコメントに表示されたSlackアバターのイメージ](docs/images/features/slack-avatars.webp)
+
+`slack.use_slack_avatars: true` でRedmineのWeb画面にSlackのプロフィール画像を表示します。既定は `false` で、サイト共通のBot Tokenとユーザー対応表・自動照合設定を使用し、プロジェクト別設定は使いません。`users:read` が必要です。メールによる自動照合には `users:read.email` も必要です。設定変更後はWebとワーカーを再起動してください。
+
+画像URLはバックグラウンドで取得し10分キャッシュします。初回は従来の画像を表示し、取得後の次の表示から切り替わります。WebとSlackキューのワーカーで共有するRailsキャッシュが必要です。照合できない場合や取得に失敗した場合、Slack以外の配信先（Gravatarを含む）が返された場合は従来の表示に戻ります。ブラウザーからSlackの画像配信先へ直接接続するため、CSPやネットワークで `avatars.slack-edge.com` と `a.slack-edge.com` を許可してください。読み込みに失敗した場合も従来の表示に戻ります。
 
 ## イベントの切り替え
 
@@ -1310,6 +1320,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **1.8.0** | RedmineのアバターにSlackのプロフィール画像を任意で表示できます。画像を使えない場合は従来のアバターを表示します。 |
 | **1.7.7** | Slackスレッドの接続先をタイトル・番号・URLで検索し、確認画面で取り込む過去の発言を選べます。 |
 | **1.7.6** | 公開チケットのコメント通知に、URLのタイトル・説明・画像をコンパクトに表示できます。YAMLで有効化できます。 |
 | **1.7.5** | Slackのチケット編集モーダルに現在の題名を追加しました。権限を確認して変更をRedmineの履歴に記録し、保存後にカードの題名を更新します。 |

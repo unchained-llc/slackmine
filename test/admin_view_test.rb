@@ -25,6 +25,10 @@ class AdminViewTest < Minitest::Test
       "/users/#{user.id}"
     end
 
+    def avatar(user, options = {})
+      image_tag("/avatars/#{user.id}.png", { class: 'avatar', alt: '', width: options[:size] })
+    end
+
     def slackmine_admin_test_notification_path
       "/admin/slackmine/test_notification"
     end
@@ -148,6 +152,9 @@ class AdminViewTest < Minitest::Test
     users = [OpenStruct.new(id: 1, name: 'Alice', login: 'alice', mail: 'alice@example.com'),
              OpenStruct.new(id: 2, name: 'Bob', login: 'bob', mail: 'bob@example.com')]
     html = render_tab('users', users: users, mentions: { 1 => 'U123', 2 => nil }, match_methods: { 1 => :email }, user_mapping: { 'old-account' => 'UOLD' })
+    document = Nokogiri::HTML(html)
+    assert_equal ['/avatars/1.png', '/avatars/2.png'], document.css('tbody tr td:first-child img.avatar').map { |image| image['src'] }
+    assert_equal ['Alice', 'Bob'], document.css('tbody tr td:first-child a').map(&:text)
     assert_includes html, 'Match method'
     assert_includes html, 'Email match'
     assert_includes html, '&lt;@U123&gt;'

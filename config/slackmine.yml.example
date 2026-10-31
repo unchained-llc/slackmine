@@ -45,6 +45,9 @@ slack:
   # SLACK_BOT_TOKEN can supply the shared token instead.
   bot_token: 'xoxb-REPLACE-ME'
   default_channel_id: 'C0123456789'
+  # Use Slack profile pictures for Redmine web avatars. Site-wide only;
+  # defaults to false. Requires users:read and a shared Rails cache for web/worker.
+  use_slack_avatars: false
   # When both user matching switches are enabled, the one written first wins.
   # Explicit users mappings always take precedence over automatic matching.
   # Requires users:read and an app reinstall. Ambiguous names are not mentioned.

@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.7.7**.
+Version **1.8.0**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -30,6 +30,7 @@ The plugin provides notifications, Work Object actions, and optional slash comma
 | [Due-date reminders](#daily-due-date-dms) | Send scheduled Slack DM digests of assigned open Issues that are overdue or due within a configurable window. Scheduling is configured separately. |
 | [App Home issue lists](#app-home-issue-lists) | View open issues updated by you, due this week, assigned to you, or reported by you. Five-column tables show title/project, status, assignee, due date, and edit actions. Filters refresh automatically; titles open Redmine and buttons open permitted Slack edit/comment forms. |
 | [User mapping](#assignee-mentions) | Map Redmine users to Slack IDs explicitly; optionally match names for outgoing mentions or [email addresses for incoming authorization](#match-viewers-by-email). Actions still enforce Redmine permissions and workflow rules. |
+| [Slack avatars](#slack-avatars-in-redmine) | Optionally display mapped users' Slack profile pictures as Redmine avatars. Disabled by default; existing avatars remain the fallback. |
 | [Personal email preference](#personal-email-preference) | Let each user opt out of supported notification emails when Slack notification settings and channel membership qualify. Account/security emails remain enabled; Slack delivery success is not checked. |
 | [Administration screen](#administration-overview) | Inspect effective settings, event colors, project/channel routing and user mentions. Queue monitoring, execution history and test notifications are available only when using Sidekiq. |
 
@@ -69,7 +70,7 @@ Add only the scopes needed for your features under **OAuth & Permissions → Bot
 | [`im:write`](https://docs.slack.dev/reference/scopes/im.write/) | Sending due-date reminder DMs |
 | [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) | Uploading Redmine attachment images into Slack notifications |
 | [`files:read`](https://docs.slack.dev/reference/scopes/files.read/) | Importing Slack thread attachments into Redmine |
-| [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | Automatic name matching, excluding bot-directed mentions, and author/mention profiles in link cards |
+| [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | Automatic name matching, Slack avatars, excluding bot-directed mentions, and author/mention profiles in link cards |
 | [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) plus [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | Matching viewers by email; automatic user matching for personal email suppression |
 | [`channels:history`](https://docs.slack.dev/reference/scopes/channels.history/) / [`groups:history`](https://docs.slack.dev/reference/scopes/groups.history/) | Public / private channel history for threaded comment notifications, reply imports/batching, and Slack link cards |
 | [`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/) / [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/) | Public / private channel information for name matching, email-suppression membership checks, and Slack link cards |
@@ -81,6 +82,7 @@ Notifications and message responses share the [`chat:write`](https://docs.slack.
 
 | Feature | Required Slack scopes | Additional Slack app setup | YAML and operational requirements |
 | --- | --- | --- | --- |
+| [Slack avatars](#slack-avatars-in-redmine) | [`users:read`](https://docs.slack.dev/reference/scopes/users.read/); email matching also requires [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) | — | `slack.use_slack_avatars: true`, user mapping, shared web/worker Rails cache |
 | Channel notifications | [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) | Invite the bot to the destination | Bot Token, destination channel, `slack` queue worker |
 | [Inline Issue images](#inline-issue-images) | [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) | — | Supported images attached to Redmine |
 | [Assignee mentions](#assignee-mentions) | No extra scope for explicit mappings; [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) for automatic name matching | — | `users` or `slack.auto_map_users_by_name: true` |
@@ -162,6 +164,14 @@ projects:
         issue:
           created: 'New Agentic issue'
 ```
+
+## Slack avatars in Redmine
+
+![Slack avatars shown for an assignee and comments](docs/images/features/slack-avatars.webp)
+
+Set `slack.use_slack_avatars: true` to display Slack profile images in Redmine web pages. It defaults to `false` and uses the site-wide bot token and user mapping or automatic matching settings, not project overrides. `users:read` is required; email matching also requires `users:read.email`. Restart web and worker processes after changing the configuration.
+
+Image URLs are fetched in the background and cached for ten minutes. The original avatar appears on the first view and the Slack image on a subsequent view after retrieval. Web and Slack queue workers must share the Rails cache. Unmatched users, failures, and non-Slack image hosts including Gravatar fall back to the original avatar. Browsers connect directly to Slack's image hosts, so CSP and network policy must allow `avatars.slack-edge.com` and `a.slack-edge.com`. Image loading failures also fall back to the original avatar.
 
 ## Event switches
 
@@ -1344,6 +1354,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.8.0** | Optionally display Slack profile pictures as Redmine avatars, with existing avatars as a fallback. |
 | **1.7.7** | Search for an Issue by title, number, or URL when connecting a Slack thread, and select past messages to import from the review screen. |
 | **1.7.6** | Add optional compact URL previews with titles, descriptions, and images to public issue comment notifications. Enable them through YAML. |
 | **1.7.5** | Add the current subject to the Slack issue edit modal. Save subject changes with permission checks and Redmine history, and refresh the card title. |
