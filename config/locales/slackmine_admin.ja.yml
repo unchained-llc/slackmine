@@ -59,6 +59,7 @@ ja:
     slack_slash_command: "Slackに登録するスラッシュコマンド名です。/から始めます。未指定なら無効です。"
     slack_bot_token: "Slack APIのBot Tokenです。プロジェクト設定 → SLACK_BOT_TOKEN → 共通設定の順に優先し、値はマスクします。"
     slack_default_channel_id: "個別指定・親プロジェクトの継承・名前の自動照合で通知先が決まらない場合の共通チャンネルです。プロジェクト内の指定はそのプロジェクトの明示指定です。"
+    slack_use_slack_avatars: "RedmineのアバターにSlackのプロフィール画像をサイト全体で使用します。users:read権限とWeb・ワーカー間で共有するRailsキャッシュが必要です。既定はfalseです。"
     slack_auto_map_users_by_name: "Redmineのログイン名をSlackのユーザー名・表示名と照合し、一意に一致した場合にメンションします。明示設定が優先されます。名前・メール照合が両方有効なら、YAMLで上に書いた設定から試します。"
     slack_auto_map_users_by_email: "登録メールアドレスの一意な一致でWork Objectやスレッド返信の権限を確認します。送信・管理画面のユーザー表示にも使います。名前・メール照合が両方有効なら、YAMLで上に書いた設定から試します。メンション通知の有効化は別設定です。"
     slack_auto_map_channels_by_name: "プロジェクト識別子をBot参加チャンネル名と照合します。空白はハイフンに変換し、大文字・小文字を区別しません。明示指定が優先されます。"

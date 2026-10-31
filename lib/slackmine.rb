@@ -783,12 +783,14 @@ require_relative 'slackmine/url_preview'
 require_relative 'slackmine/notification_safety'
 require_relative 'slackmine/notification_coalescing'
 require_relative 'slackmine/mail_preference'
+require_relative 'slackmine/use_slack_avatars'
 
 
 module Slackmine
   module_function
 
   def install_patches
+    AvatarsHelper.prepend Slackmine::UseSlackAvatars::HelperPatch if defined?(AvatarsHelper) && !(AvatarsHelper < Slackmine::UseSlackAvatars::HelperPatch)
     ApplicationJob.include Slackmine::JobTracking if defined?(ApplicationJob) && !(ApplicationJob < Slackmine::JobTracking)
     if defined?(ApplicationHelper) && !(ApplicationHelper < Slackmine::LinkCardsHelper)
       ApplicationHelper.prepend Slackmine::LinkCardsHelper
