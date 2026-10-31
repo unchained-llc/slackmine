@@ -298,7 +298,27 @@ messages:
     destination: 接続先
     disconnect: 接続を解除
     save_history: これまでの会話も保存する
-    picker_hint: 接続するチケット番号またはURLを入力してください。確認画面で過去の発言を選べます。
+    individual_preview: "#%{id} %{subject}
+過去の対象発言%{count}件から取り込む発言を選んでください。初期状態ではすべて選択されています。今後の返信も保存します。"
+    history_mode: 個別選択
+    choose_individual: 発言を個別に選択する
+    history_group: 発言グループ %{number}
+    history_group_placeholder: 取り込む発言を選択
+    individual_history_limit: 個別選択は過去の発言20件までです。メニューを開き直し、すべて取り込む方法を選んでください。
+    bulk_preview_history: "#%{id} %{subject}
+過去の対象発言%{count}件をすべて、あなたの名義の1件の引用コメントにまとめます。今後の返信も保存します。"
+    bulk_preview_future: "#%{id} %{subject}
+過去の発言は取り込まず、今後の返信を保存します。"
+    bulk_history_text_limit: 過去の会話が10万文字を超えるため取り込めません。接続は作成されていません。
+    bulk_history_files_limit: 過去の会話の添付ファイルが10件を超えるため取り込めません。接続は作成されていません。
+    bulk_history_post_limit: 過去の発言に1万文字を超えるものがあるため取り込めません。接続は作成されていません。
+    bulk_thread_limit: スレッドが接続時の上限999投稿を超えるため接続できません。
+    unified_picker_hint: 最近のチケットから選ぶか、番号・URL・タイトルで検索してください。確認画面で接続先と取り込み内容を確認できます。
+    search_placeholder: チケットを検索または選択
+    issue_search: チケット番号・URL・タイトル
+    choose_search_result: タイトルが一致するチケットから選んでください。
+    search_result: 検索結果
+    picker_hint: 接続するチケット番号またはURLを入力してください。確認画面で接続先と取り込み内容を確認できます。
     issue_number: チケット番号またはURL
     history: 過去の会話
     review: 内容を確認

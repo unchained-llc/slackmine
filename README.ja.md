@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **1.7.6**。
+バージョン **1.7.7**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -104,7 +104,7 @@ Work Objectのプレビュー・操作、スラッシュコマンド、スレッ
 | Event Subscriptions → Request URL | `https://redmine.example.com/slackmine/events`。使う機能のイベントをSubscribe to bot eventsに登録 |
 | Interactivity & Shortcuts → Request URL | `https://redmine.example.com/slackmine/interactions`。ボタン、フォーム、メッセージショートカットの受付 |
 | Slash Commands → Request URL | `https://redmine.example.com/slackmine/commands`。コマンド名を `slack.slash_command` と一致させる |
-| Select Menus → Options Load URL | **空欄**。現在のSlackmineは選択肢をフォームと一緒に送るため、外部検索用URLは不要 |
+| Select Menus → Options Load URL | `https://redmine.example.com/slackmine/interactions`（スレッド接続のチケット検索に必要） |
 
 `slack.events` にはApp ID、Team ID、Signing Secretを設定します。Signing SecretはBot Tokenとは別です。YAML変更後はRedmineとSidekiqを再起動してください。詳細表示・モーダル・App Homeには専用の追加OAuthスコープがなく、設定とユーザー照合が必要です（[詳細表示](https://docs.slack.dev/reference/methods/entity.presentDetails/)、[モーダル](https://docs.slack.dev/reference/methods/views.open/)、[App Homeイベント](https://docs.slack.dev/reference/events/app_home_opened/)）。
 
@@ -906,15 +906,15 @@ Slackアプリの **Interactivity & Shortcuts** でInteractivityを有効にし�
 
 ![メッセージメニュー：新規チケット作成と既存チケットへの接続](docs/images/features/message-menu.webp)
 
-メッセージの「…」から **スレッドを既存チケットに接続** を選び、チケット番号（`#`付きも可）またはRedmineのチケットURLを入力します。検索パラメーターやコメント位置（`#note-…`）付きのURLも使えます。「これまでの会話も保存する」は初期値ONです。確認画面で発言ごとに取り込みを外せます。接続を確定すると、過去分は接続した人の名義の1件のコメントにまとめ、発言ごとの投稿者・日時・Slackへのリンクを残します。以後の返信は、対応付けした本人のRedmineユーザー名義でコメント・添付として保存します。
+メッセージの「…」から **スレッドを既存チケットに接続** を選び、チケット番号（`#`付きも可）、RedmineのチケットURL、またはタイトルの一部を入力します。同じ検索欄を開くと、閲覧可能な最新100件のうち接続可能なチケットを最大25件表示し、そこからも選べます。検索パラメーターやコメント位置（`#note-…`）付きのURLも使えます。タイトル検索は更新日時の新しい一致候補を最大100件調べ、そのうち接続可能なチケットを最大25件表示します。確認画面で取り込む過去の発言を選びます。初期状態ではすべて選択されています。20件までは発言ごとに表示し、長い会話は最大100件ずつのグループで選べます。過去分を保存しない場合は選択をすべて外します。接続を確定すると、選択した過去分は接続した人の名義の1件のコメントにまとめ、発言ごとの投稿者・日時・Slackへのリンクを残します。以後の返信は、対応付けした本人のRedmineユーザー名義でコメント・添付として保存します。
 
 新規作成用のショートカット名は「メッセージからチケットを作成」、この接続用は「スレッドを既存チケットに接続」に揃えます。新規作成は選択したメッセージだけを使い、接続はスレッド全体を対象とします。名前を変更してもCallback IDは変更しません。
 
-同じメニューを再度開くと接続を解除できます。保存済みコメントは残ります。接続時の取り込みに失敗した場合は、スレッドとRedmineの保存結果を確認してから操作し直します。接続後の返信イベントは従来のSlackキューで処理します。確認後に会話が変更された場合は、接続を解除して確認し直してください。解除後に再接続すると新しい確認を行います。過去分を再度選ぶと引用コメントも改めて作られるため、不要なら過去分を外してください。
+同じメニューを再度開くと接続を解除できます。保存済みコメントは残ります。接続時の取り込みに失敗した場合は、スレッドとRedmineの保存結果を確認してから操作し直します。接続後の返信イベントは従来のSlackキューで処理します。確認後に会話が変更された場合は、接続を解除して確認し直してください。解除後に再接続すると新しい確認を行います。過去分を再度取り込むと引用コメントも改めて作られるため、不要なら確認画面で選択をすべて外してください。
 
 ### Slackアプリ側の作業
 
-1. **Interactivity & Shortcuts** をONにし、Request URLを `https://redmine.example.com/slackmine/interactions` に設定します。既に設定済みならそのまま使います。
+1. **Interactivity & Shortcuts** をONにし、Request URLを `https://redmine.example.com/slackmine/interactions` に設定します。既に設定済みならそのまま使います。**Select Menus → Options Load URL** にも同じURLを設定して保存します。チケット検索欄にはこの設定が必要です。
 2. **Shortcuts → Create New Shortcut → On messages** を選び、次を登録してSave Changesします。
    - Name: `スレッドを既存チケットに接続`
    - Short Description: `会話を既存チケットに接続し、過去の発言と以後の返信を保存します`
@@ -935,7 +935,7 @@ Slackアプリの **Interactivity & Shortcuts** でInteractivityを有効にし�
 5. **Event Subscriptions** をONにし、Request URLを `https://redmine.example.com/slackmine/events` に設定します。Subscribe to bot eventsに、公開チャンネルなら **`message.channels`**、非公開チャンネルなら **`message.groups`** を登録して保存します。
 6. 接続したいチャンネルへBotを招待します。接続先プロジェクトの通知チャンネルと異なる会話も接続できます。DM・グループDMは対象外です。
 
-スラッシュコマンドの追加登録、Options Load URLの設定、Work Objectの有効化は不要です。既に返信取り込みを使っているアプリでは、新しいメッセージショートカットの登録と不足するreadスコープの確認が主な追加作業です。
+スラッシュコマンドの追加登録とWork Objectの有効化は不要です。既に返信取り込みを使っているアプリでは、新しいメッセージショートカットの登録と不足するreadスコープの確認が主な追加作業です。
 
 Slack公式資料: [メッセージショートカットの設定](https://docs.slack.dev/interactivity/implementing-shortcuts/)、[スレッド履歴](https://docs.slack.dev/reference/methods/conversations.replies/)、[チャンネル参加者](https://docs.slack.dev/reference/methods/conversations.members/)。
 
@@ -973,8 +973,8 @@ users:
 
 過去分の表示は通常の会話ピックアップと同じカード形式です。同じ投稿者の連続した発言は本文を1改行でつなぎ、投稿者・日時（先頭の発言）・「Open in Slack」を1回だけ表示します。投稿者が変わると別カードになります。A→A→B→Aは順番を保った3枚のカードとなり、離れたAの発言をまとめません。各投稿の元URLは保存データに残し、添付は対応するカードに表示します。この表示はWebとメールの両方に適用され、既に保存した接続前の会話にも反映されます。
 
-- 過去分は親投稿を含む人の発言20件までです。20件を超える場合は「これまでの会話も保存する」を外して接続できます。スレッド全体は1000件までで、不完全な履歴を黙って切り捨てません。全体が1000件を超えるスレッドには接続できません。
-- 発言単体・選択した本文合計は10,000文字まで。Slackの確認画面のブロック上限にも従います。
+- 過去分は親投稿を含む対象の人の発言をまとめて取り込みます。接続時のスレッド全体の上限は999投稿で、接続状態を記録する投稿のために1件分を確保します。上限超過や不完全な履歴はエラーにします。
+- 過去の本文は発言単体1万文字、合計10万文字までです。添付ファイルは最大10件で、サイズと形式の制限も適用します。上限を超える場合はエラーを表示します。
 - Bot投稿・Bot宛ての発言は対象外です。過去分の投稿者はRedmineとの対応付けがなくても引用として保存できます。
 - 確認中から接続確定までの新しい返信を補完します。イベント受信と重なった返信は二重保存しません。補完期間のスレッド全体が1000件を超えると取り込みを完了できず、解除して確認し直す対象になります。
 - 接続後の返信はすぐに保存します。既存通知スレッド用の `thread_comment_batch` は適用しません。
@@ -1310,6 +1310,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **1.7.7** | Slackスレッドの接続先をタイトル・番号・URLで検索し、確認画面で取り込む過去の発言を選べます。 |
 | **1.7.6** | 公開チケットのコメント通知に、URLのタイトル・説明・画像をコンパクトに表示できます。YAMLで有効化できます。 |
 | **1.7.5** | Slackのチケット編集モーダルに現在の題名を追加しました。権限を確認して変更をRedmineの履歴に記録し、保存後にカードの題名を更新します。 |
 | **1.7.4** | コメントの差分通知に今回追加した画像を表示します。URLエンコードされたファイル名やコメント作成後に添付された画像にも対応し、文字だけの編集では既存画像を再表示しません。 |

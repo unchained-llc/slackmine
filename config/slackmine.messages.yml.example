@@ -298,6 +298,26 @@ messages:
     destination: Destination
     disconnect: Disconnect
     save_history: Save the conversation so far
+    individual_preview: "#%{id} %{subject}
+Choose which of the %{count} past posts to import. All are selected initially. Future replies will also be saved."
+    history_mode: Individual selection
+    choose_individual: Choose individual posts
+    history_group: Posts %{number}
+    history_group_placeholder: Select posts to import
+    individual_history_limit: Individual selection supports up to 20 past posts. Reopen the shortcut and import all posts instead.
+    bulk_preview_history: "#%{id} %{subject}
+All %{count} eligible past posts will be saved as one quoted comment under your name. Future replies will also be saved."
+    bulk_preview_future: "#%{id} %{subject}
+Past posts will not be imported. Future replies will be saved."
+    bulk_history_text_limit: The past conversation exceeds 100,000 characters and cannot be imported. No connection was created.
+    bulk_history_files_limit: The past conversation has more than 10 attachments and cannot be imported. No connection was created.
+    bulk_history_post_limit: A past post exceeds 10,000 characters and cannot be imported. No connection was created.
+    bulk_thread_limit: This thread has reached the 999-post connection limit and cannot be connected.
+    unified_picker_hint: Choose a recent Issue or search by number, URL, or title. Review the destination and import choice before connecting.
+    search_placeholder: Search or choose an Issue
+    issue_search: Issue number, URL, or title
+    choose_search_result: Select an Issue from the matching titles.
+    search_result: Matching Issues
     picker_hint: Enter the Issue number or URL to connect. You can select past messages on the review screen.
     issue_number: Issue number or URL
     history: Past conversation

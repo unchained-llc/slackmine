@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.7.6**.
+Version **1.7.7**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -106,7 +106,7 @@ User mapping uses explicit `users` entries or email matching where supported. Au
 | Event Subscriptions → Request URL | `https://redmine.example.com/slackmine/events`. Subscribe to the bot events for the enabled features |
 | Interactivity & Shortcuts → Request URL | `https://redmine.example.com/slackmine/interactions`. Receives buttons, forms, and message shortcuts |
 | Slash Commands → Request URL | `https://redmine.example.com/slackmine/commands`. Match the registered command name to `slack.slash_command` |
-| Select Menus → Options Load URL | **Leave empty**. Slackmine sends options with its forms and does not need an external options endpoint |
+| Select Menus → Options Load URL | `https://redmine.example.com/slackmine/interactions` (required for thread connection Issue search) |
 
 Configure App ID, Team ID, and Signing Secret under `slack.events`. The Signing Secret is separate from the Bot Token. Restart Redmine and Sidekiq after YAML changes. Details, modals, and App Home have no dedicated additional OAuth scope; they still require setup and user mapping ([details](https://docs.slack.dev/reference/methods/entity.presentDetails/), [modals](https://docs.slack.dev/reference/methods/views.open/), [App Home event](https://docs.slack.dev/reference/events/app_home_opened/)).
 
@@ -927,15 +927,15 @@ The selected message is temporarily stored in the existing `Rails.cache`, bound 
 
 ![Message menu shortcuts: create an Issue or connect a thread](docs/images/features/message-menu.webp)
 
-From a message's **More actions** menu, choose **Connect a thread to an existing Issue** and enter the Issue number (with or without `#`) or its Redmine URL. URLs with query parameters or comment anchors are also supported. **Save past conversation too** is selected by default. Review the past posts and deselect any you do not want to import. Confirming the connection saves the selected history as one comment under the connecting user's Redmine identity, preserving the original speakers, timestamps, and Slack links. Future replies and files are saved under each mapped user's Redmine identity.
+From a message's **More actions** menu, choose **Connect a thread to an existing Issue** and enter the Issue number (with or without `#`), its Redmine URL, or part of its title and select a matching Issue. The same menu offers up to 25 connectable Issues from the 100 most recently updated visible Issues when opened. URLs with query parameters or comment anchors are also supported. Title search checks up to 100 recently updated matches and returns up to 25 Issues the user can connect. On the review screen, choose which past posts to import; all are selected initially. Up to 20 posts are shown individually; longer conversations are presented in groups of up to 100. Clear the selections to save only future replies. Confirming the connection saves the selected history as one comment under the connecting user's Redmine identity, preserving the original speakers, timestamps, and Slack links. Future replies and files are saved under each mapped user's Redmine identity.
 
 Use **Create an Issue from a message** for the creation shortcut and **Connect a thread to an existing Issue** for this connection shortcut. Creation copies only the selected message; connection applies to the whole thread. Rename shortcut labels without changing their callback IDs.
 
-Open the same shortcut again to disconnect. Saved comments remain. If a connection-time import fails, check the saved thread and Issue state before starting a new action. Future reply events retain Slack queue retries. If the conversation changes after confirmation, disconnect and review it again. Reconnecting starts a new review; selecting the same history again creates another quoted comment, so deselect history when it is no longer needed.
+Open the same shortcut again to disconnect. Saved comments remain. If a connection-time import fails, check the saved thread and Issue state before starting a new action. Future reply events retain Slack queue retries. If the conversation changes after confirmation, disconnect and review it again. Reconnecting starts a new review; importing the same history again creates another quoted comment, so turn history import off when it is no longer needed.
 
 ### Slack app setup for thread connections
 
-1. Enable **Interactivity & Shortcuts** and set Request URL to `https://redmine.example.com/slackmine/interactions`. Reuse the URL if already configured.
+1. Enable **Interactivity & Shortcuts** and set Request URL to `https://redmine.example.com/slackmine/interactions`. Reuse the URL if already configured. Set **Select Menus → Options Load URL** to the same URL and save; this is required for the Issue search menu.
 2. Under **Shortcuts → Create New Shortcut → On messages**, register:
    - Name: `Connect a thread to an existing Issue`
    - Short Description: `Connect a conversation to an existing Issue and save past posts and future replies`
@@ -956,7 +956,7 @@ Open the same shortcut again to disconnect. Saved comments remain. If a connecti
 5. Enable **Event Subscriptions** with Request URL `https://redmine.example.com/slackmine/events`. Subscribe to **`message.channels`** for public channels and **`message.groups`** for private channels.
 6. Invite the bot to the source channel. Conversations outside the destination project's notification channels can be connected. DMs and group DMs are unsupported.
 
-No additional slash command, Options Load URL, or Work Object setup is required. If reply importing is already configured, the main additions are the message shortcut and any missing read scopes.
+No additional slash command or Work Object setup is required. If reply importing is already configured, the main additions are the message shortcut and any missing read scopes.
 
 Slack references: [message shortcuts](https://docs.slack.dev/interactivity/implementing-shortcuts/), [thread history](https://docs.slack.dev/reference/methods/conversations.replies/), and [channel membership](https://docs.slack.dev/reference/methods/conversations.members/).
 
@@ -991,8 +991,8 @@ For timing checks, compare `connection preview direct duration_ms` or `connectio
 
 Past conversation uses the same cards as normal conversation pickup. Consecutive posts by the same speaker are joined with a single newline, with one speaker/timestamp header (using the first post's time) and one **Open in Slack** link. A speaker change starts a new card: A→A→B→A produces three cards in conversation order. Original post URLs remain in the saved data, and attachments appear in the corresponding card. This applies to both web and email, including previously saved connection-history imports.
 
-- Past history includes up to 20 human posts, including the parent. For longer history, deselect past-conversation importing. The whole thread is limited to 1,000 posts; incomplete history is rejected rather than silently truncated.
-- Each post and the combined selected text are limited to 10,000 characters. Slack's review-modal block limits also apply.
+- Past history includes eligible human posts, including the parent. A new connection supports up to 999 total thread posts, reserving one slot for its connection marker. Incomplete history and over-limit threads are rejected.
+- Each post is limited to 10,000 characters and the combined past text to 100,000 characters. At most 10 attachments can be imported, subject to file size and type limits. Limits are checked before connecting; exceeding them reports an error.
 - Bot posts and posts addressed to bots are excluded. Historical speakers need not have Redmine mappings to be included as quotations.
 - Replies added between review and confirmation are imported without duplicate saving when reply events overlap. If the thread exceeds 1,000 posts during catch-up, disconnect and review again.
 - Future replies are saved immediately. The notification-thread `thread_comment_batch` setting does not apply to explicit connections.
@@ -1344,6 +1344,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.7** | Search for an Issue by title, number, or URL when connecting a Slack thread, and select past messages to import from the review screen. |
 | **1.7.6** | Add optional compact URL previews with titles, descriptions, and images to public issue comment notifications. Enable them through YAML. |
 | **1.7.5** | Add the current subject to the Slack issue edit modal. Save subject changes with permission checks and Redmine history, and refresh the card title. |
 | **1.7.4** | Display newly referenced images in comment diff notifications, including URL-encoded filenames and files attached after the comment was created. Do not repeat unchanged images when only text is edited. |

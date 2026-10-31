@@ -10,10 +10,13 @@ class SlackmineEventsController < ActionController::Base
   protect_from_forgery with: :null_session
 
   def receive
-    return head :payload_too_large if request.content_length.to_i > 65_536
+    # Large selections include Slack's view blocks, options and selected state.
+    # Only an authenticated thread-connection confirmation may exceed 64 KiB.
+    return head :payload_too_large if request.content_length.to_i > 1_048_576
     body = request.raw_post
-    return head :payload_too_large if body.bytesize > 65_536
+    return head :payload_too_large if body.bytesize > 1_048_576
     form = body.start_with?('payload=')
+    return head :payload_too_large if !form && [body.bytesize, request.content_length.to_i].max > 65_536
     if form
       pairs = URI.decode_www_form(body)
       return head :bad_request unless pairs.length == 1 && pairs.first[0] == 'payload'
@@ -30,6 +33,10 @@ class SlackmineEventsController < ActionController::Base
       app_id: payload['api_app_id'], team_id: team_id
     )
     return head :unauthorized unless integration
+    large_confirmation = payload['type'] == 'view_submission' && payload.dig('view', 'callback_id') == Slackmine::ThreadConnections::SAVE_CALLBACK
+    if [body.bytesize, request.content_length.to_i].max > 65_536 && !(form && (large_confirmation || Slackmine::ThreadConnections.selection_action?(payload)))
+      return head :payload_too_large
+    end
 
     if payload['type'] == 'url_verification'
       return render json: { challenge: payload['challenge'] } if payload['challenge'].is_a?(String)

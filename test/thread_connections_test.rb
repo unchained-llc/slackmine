@@ -2,6 +2,15 @@
 require_relative 'message_shortcuts_test'
 require_relative '../app/jobs/slackmine_thread_connection_job'
 
+class Issue
+  def self.visible(*)
+    scope = Object.new
+    %i[where order limit].each { |method| scope.define_singleton_method(method) { |*| self } }
+    scope.define_singleton_method(:to_a) { [] }
+    scope
+  end unless respond_to?(:visible)
+end
+
 class ThreadConnectionsTest < Minitest::Test
   CONNECTIONS = Slackmine::ThreadConnections
 
@@ -123,10 +132,9 @@ class ThreadConnectionsTest < Minitest::Test
       assert_equal 'Dismiss', view.dig('close', 'text')
       assert_equal 'Connect', view.dig('submit', 'text')
       assert_equal 'Issue 7: Example issue', view.dig('blocks', 0, 'text', 'text')
-      assert_equal 'Destination', view.dig('blocks', 1, 'label', 'text')
-      assert_equal 'Alice: Parent message (0 files)', view.dig('blocks', 2, 'text', 'text')
-      assert_equal 'Keep this post', view.dig('blocks', 3, 'element', 'options', 0, 'text', 'text')
-      assert_equal 'Selection', view.dig('blocks', 3, 'label', 'text')
+      assert_equal 'Alice: Parent message (0 files)', view.dig('blocks', 1, 'text', 'text')
+      assert_equal 'Keep this post', view.dig('blocks', 2, 'elements', 0, 'options', 0, 'text', 'text')
+      assert_equal 'actions', view.dig('blocks', 2, 'type')
       CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: true)
       assert_includes @calls.last.last['text'], 'Connected successfully'
       CONNECTIONS.preview_error('V123', StandardError.new, project: @issue.project)
@@ -144,8 +152,125 @@ class ThreadConnectionsTest < Minitest::Test
       assert_equal 'views.update', @calls.last.first
       assert @calls.any? { |method, _| method == 'conversations.replies' }
       picker = @calls.last[1]['view']
-      assert_equal CONNECTIONS::PICK_CALLBACK, picker['callback_id']
-      assert_equal 'history', picker['blocks'].last['element']['initial_options'].first['value']
+      assert_equal CONNECTIONS::SEARCH_CALLBACK, picker['callback_id']
+      assert_equal ['search_issue'], picker['blocks'].map { |block| block['block_id'] }.compact
+    end
+  end
+
+  def test_individual_mode_reviews_and_imports_only_selected_posts
+    context do
+      CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
+      values = { 'search_issue' => { 'search_issue' => { 'selected_option' => { 'value' => '7' } } } }
+      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(@calls.last.last['view'], values))
+      assert_includes result['view'].to_json, 'Parent message'
+      selection = result['view']['blocks'].find { |block| block['block_id'] == 'post_1' }
+      assert_equal 'actions', selection['type']
+      refute selection.key?('optional')
+      action = submitted(result['view'], {}).merge('type' => 'block_actions', 'actions' => [{ 'action_id' => 'post_1' }])
+      assert CONNECTIONS.handles?(action)
+      assert_equal({}, CONNECTIONS.interaction('ATEST', 'TTEST', action))
+      assert_empty @queued
+      state = { 'post_1' => { 'post_1' => { 'selected_options' => [{ 'value' => '1' }] } } }
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], state)))
+      drain_jobs
+      assert_equal ['U456'], @saved.first.last[:events].map { |event| event['user'] }
+    end
+  end
+
+  def test_individual_mode_selects_across_groups_of_100
+    context do
+      @messages = 101.times.map { |index| { 'ts' => format('1791001%03d.000001', index), 'user' => 'U123', 'text' => "Post #{index}" } }
+      CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
+      values = { 'search_issue' => { 'search_issue' => { 'selected_option' => { 'value' => '7' } } } }
+      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(@calls.last.last['view'], values))
+      groups = result['view']['blocks'].select { |block| block['block_id'].to_s.start_with?('history_group_') }
+      assert_equal [100, 1], groups.map { |block| block['accessory']['options'].size }
+      state = { 'history_group_0' => { 'history_group_0' => { 'selected_options' => [{ 'value' => '0' }] } },
+        'history_group_1' => { 'history_group_1' => { 'selected_options' => [{ 'value' => '100' }] } } }
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], state)))
+      drain_jobs
+      assert_equal ['Post 0', 'Post 100'], @saved.first.last[:events].map { |event| event['text'] }
+    end
+  end
+
+  def test_individual_mode_at_thread_limit_keeps_signed_metadata_and_request_bounded
+    context do
+      @messages = 999.times.map { |index| { 'ts' => format('179100%04d.000001', index), 'user' => 'U123', 'text' => 'x' * 60 } }
+      source = @source.merge('bulk_history' => true, 'individual_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      assert_equal CONNECTIONS::SAVE_CALLBACK, view['callback_id']
+      groups = view['blocks'].select { |block| block['block_id'].to_s.start_with?('history_group_') }
+      assert_equal 10, groups.size
+      assert_operator view['private_metadata'].bytesize, :<, 3000
+      values = groups.to_h { |group| [group['block_id'], { group['block_id'] => { 'selected_options' => group['accessory']['initial_options'] } }] }
+      payload = submitted(view, values).merge('api_app_id' => 'ATEST', 'team' => { 'id' => 'TTEST' })
+      body = URI.encode_www_form('payload' => JSON.generate(payload))
+      assert_operator body.bytesize, :>, 65_536
+      assert_operator body.bytesize, :<, 1_048_576
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(view, values)))
+      assert_operator @queued.last[2]['selection_bits'].bytesize, :<, 200
+    end
+  end
+
+  def test_bulk_import_handles_100_posts_and_rejects_text_over_limit
+    context do
+      @messages = 100.times.map { |index| { 'ts' => format('1791001%03d.000001', index), 'user' => 'U123', 'text' => "Post #{index}" } }
+      CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
+      values = { 'search_issue' => { 'search_issue' => { 'selected_option' => { 'value' => '7' } } },
+        'history' => { 'history' => { 'selected_options' => [{ 'value' => 'history' }] } } }
+      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(@calls.last.last['view'], values))
+      assert_equal CONNECTIONS::SAVE_CALLBACK, result.dig('view', 'callback_id')
+      assert_includes result['view'].to_json, '100 past posts'
+      refute result['view']['blocks'].any? { |block| block['block_id'].to_s.start_with?('post_') }
+      options = result['view']['blocks'].find { |block| block['block_id'] == 'history_group_0' }.dig('accessory', 'initial_options')
+      all_selected = { 'history_group_0' => { 'history_group_0' => { 'selected_options' => options } } }
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], all_selected)))
+      drain_jobs
+      assert_equal 100, @saved.first.last[:history_cards].size
+
+      @source['nonce'] = SecureRandom.hex(16)
+      @messages = [{ 'ts' => '1791001000.000001', 'user' => 'U123', 'text' => 'x' * 100_001 }]
+      CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
+      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(@calls.last.last['view'], values))
+      refute result['view'].key?('submit')
+      assert_includes result['view'].to_json, CONNECTIONS.message('bulk_history_text_limit')
+    end
+  end
+
+  def test_bulk_preview_rejects_too_many_files_and_a_long_post
+    context do
+      source = @source.merge('bulk_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
+      @messages = [{ 'ts' => '1791001000.000001', 'user' => 'U123', 'text' => 'x' * 10_001 }]
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      refute view.key?('submit')
+      assert_includes view.to_json, CONNECTIONS.message('bulk_history_post_limit')
+      @messages = [{ 'ts' => '1791001000.000001', 'user' => 'U123', 'text' => 'files',
+        'files' => 11.times.map { |index| { 'id' => "F#{index}" } } }]
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      refute view.key?('submit')
+      assert_includes view.to_json, CONNECTIONS.message('bulk_history_files_limit')
+    end
+  end
+
+  def test_bulk_history_changed_after_review_is_rejected_before_connection
+    context do
+      source = @source.merge('bulk_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      saved_source = CONNECTIONS.source_for('ATEST', 'TTEST', @viewer, submitted(view, {}))
+      @messages.first['text'] = 'Edited after review'
+      assert_raises(RuntimeError) { CONNECTIONS.finish('ATEST', 'TTEST', saved_source) }
+      refute @calls.any? { |method, _| method == 'chat.postMessage' }
+    end
+  end
+
+  def test_full_thread_returns_capacity_error_before_connecting
+    context do
+      messages = 1000.times.map { |index| { 'ts' => format('1791001%03d.000001', index), 'user' => 'U123', 'text' => 'Post' } }
+      CONNECTIONS.stub(:history, messages) { CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123') }
+      view = @calls.last.last['view']
+      refute view.key?('submit')
+      assert_includes view.to_json, CONNECTIONS.message('bulk_thread_limit')
+      refute @calls.any? { |method, _| method == 'chat.postMessage' }
     end
   end
 
@@ -170,6 +295,53 @@ class ThreadConnectionsTest < Minitest::Test
     end
   end
 
+  def test_recent_issue_can_be_selected_and_permissions_are_rechecked
+    scope = Object.new
+    %i[order limit].each { |method| scope.define_singleton_method(method) { |*| self } }
+    scope.define_singleton_method(:to_a) { [@candidate] }
+    scope.instance_variable_set(:@candidate, @issue)
+    context do
+      Issue.stub(:visible, scope) do
+        CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
+      end
+      picker = @calls.last.last['view']
+      assert_equal 'external_select', picker.dig('blocks', 1, 'element', 'type')
+      suggestion = submitted(picker, {}).merge('type' => 'block_suggestion', 'action_id' => 'search_issue', 'value' => '')
+      options = Issue.stub(:visible, scope) { CONNECTIONS.interaction('ATEST', 'TTEST', suggestion)['options'] }
+      assert_equal ['7'], options.map { |option| option['value'] }
+      values = { 'search_issue' => { 'search_issue' => { 'selected_option' => { 'value' => '7' } } } }
+      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(picker, values))
+      assert_equal CONNECTIONS::SAVE_CALLBACK, result.dig('view', 'callback_id')
+      refute result['view']['blocks'].any? { |block| %w[issue destination].include?(block['block_id']) }
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], {})))
+      @issue.define_singleton_method(:notes_addable?) { |*| false }
+      assert_equal 'errors', CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(picker, values))['response_action']
+    end
+  end
+
+  def test_suggestions_search_titles_and_references_and_check_source
+    added_sanitize = !Issue.respond_to?(:sanitize_sql_like)
+    Issue.define_singleton_method(:sanitize_sql_like) { |value| value } if added_sanitize
+    scope = Object.new
+    scope.define_singleton_method(:where) { |*args| raise 'bad query' unless args.last == '%example%'; self }
+    %i[order limit].each { |method| scope.define_singleton_method(method) { |*| self } }
+    scope.define_singleton_method(:to_a) { [@candidate] }
+    scope.instance_variable_set(:@candidate, @issue)
+    context do
+      view = CONNECTIONS.modal([], app: 'ATEST', team: 'TTEST', source: @source, callback: CONNECTIONS::SEARCH_CALLBACK)
+      payload = submitted(view, {}).merge('type' => 'block_suggestion', 'action_id' => 'search_issue', 'value' => 'Example')
+      options = Issue.stub(:visible, scope) { CONNECTIONS.interaction('ATEST', 'TTEST', payload)['options'] }
+      assert_equal ['7'], options.map { |option| option['value'] }
+      ['#7', Slackmine::Formatter.url('/issues/7')].each do |query|
+        assert_equal ['7'], CONNECTIONS.interaction('ATEST', 'TTEST', payload.merge('value' => query))['options'].map { |option| option['value'] }
+      end
+      payload['view']['private_metadata'] = 'invalid'
+      assert_empty CONNECTIONS.interaction('ATEST', 'TTEST', payload)['options']
+    end
+  ensure
+    Issue.singleton_class.remove_method(:sanitize_sql_like) if added_sanitize
+  end
+
   def test_future_only_preview_does_not_fetch_history
     context do
       assert_equal CONNECTIONS::SAVE_CALLBACK, preview(history: false)['callback_id']
@@ -186,13 +358,13 @@ class ThreadConnectionsTest < Minitest::Test
       picker = @calls.last[1]['view']
       @calls.clear
       result = CONNECTIONS.interaction('ATEST', 'TTEST', submitted(picker, {
-        'issue' => { 'issue' => { 'value' => '7' } },
+        'search_issue' => { 'search_issue' => { 'selected_option' => { 'value' => '7' } } },
         'history' => { 'history' => { 'selected_options' => [{ 'value' => 'history' }] } }
       }))
       assert_same request_thread, Thread.current
       assert_equal 'update', result['response_action']
       assert_equal CONNECTIONS::SAVE_CALLBACK, result['view']['callback_id']
-      assert_includes result['view'].to_json, 'Parent message'
+      assert_includes result['view'].to_json, '2 past posts'
       refute @calls.any? { |method, _| method == 'views.update' }
       assert_empty @queued
     end
@@ -207,7 +379,7 @@ class ThreadConnectionsTest < Minitest::Test
       result = nil
       CONNECTIONS.stub(:prepare_preview, ->(*) { raise CONNECTIONS::PreviewDeadline }) do
         result = CONNECTIONS.interaction('ATEST', 'TTEST', submitted(picker, {
-          'issue' => { 'issue' => { 'value' => '7' } },
+          'search_issue' => { 'search_issue' => { 'selected_option' => { 'value' => '7' } } },
           'history' => { 'history' => { 'selected_options' => [{ 'value' => 'history' }] } }
         }))
       end
@@ -251,12 +423,54 @@ class ThreadConnectionsTest < Minitest::Test
     ['https://other.invalid/issues/7', "#{url}/edit", "#{url}8oops", '0', '#0', 'text 7', ''].each do |value|
       context(issue_lookup: ->(*) { flunk "Unexpected lookup for #{value}" }) do
         view = CONNECTIONS.modal([], app: 'ATEST', team: 'TTEST', source: @source, callback: CONNECTIONS::PICK_CALLBACK)
-        result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(view, {
-          'issue' => { 'issue' => { 'value' => value } }
-        }))
+        empty_scope = Object.new
+        %i[where order limit].each { |method| empty_scope.define_singleton_method(method) { |*| self } }
+        empty_scope.define_singleton_method(:to_a) { [] }
+        result = Issue.stub(:visible, empty_scope) do
+          CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(view, {
+            'issue' => { 'issue' => { 'value' => value } }
+          }))
+        end
         assert_equal 'errors', result['response_action'], value
       end
     end
+  end
+
+  def test_title_search_selects_only_allowed_issues_and_preserves_history
+    added_sanitize = !Issue.respond_to?(:sanitize_sql_like)
+    Issue.define_singleton_method(:sanitize_sql_like) { |value| value } if added_sanitize
+    denied = @issue.dup
+    denied.id = 8
+    denied.define_singleton_method(:is_private?) { false }
+    denied.define_singleton_method(:visible?) { |*| true }
+    denied.define_singleton_method(:notes_addable?) { |*| false }
+    scope = Object.new
+    scope.define_singleton_method(:where) { |*args| raise 'unescaped query' unless args.last == '%example%'; self }
+    %i[order limit].each { |method| scope.define_singleton_method(method) { |*| self } }
+    scope.define_singleton_method(:to_a) { [@allowed, @denied] }
+    scope.instance_variable_set(:@allowed, @issue)
+    scope.instance_variable_set(:@denied, denied)
+    context do
+      view = CONNECTIONS.modal([], app: 'ATEST', team: 'TTEST', source: @source, callback: CONNECTIONS::PICK_CALLBACK)
+      result = Issue.stub(:visible, scope) do
+        Issue.stub(:sanitize_sql_like, ->(value) { value }) do
+          CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(view, {
+            'issue' => { 'issue' => { 'value' => 'Example' } },
+            'history' => { 'history' => { 'selected_options' => [{ 'value' => 'history' }] } }
+          }))
+        end
+      end
+      picker = result['view']
+      assert_equal CONNECTIONS::SELECT_CALLBACK, picker['callback_id']
+      assert_equal ['7'], picker.dig('blocks', 1, 'element', 'options').map { |option| option['value'] }
+      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(picker, {
+        'choice' => { 'choice' => { 'selected_option' => { 'value' => '7' } } }
+      }))
+      assert_equal CONNECTIONS::SAVE_CALLBACK, result.dig('view', 'callback_id')
+      assert_includes result['view'].to_json, 'Parent message'
+    end
+  ensure
+    Issue.singleton_class.remove_method(:sanitize_sql_like) if added_sanitize
   end
 
   def test_pick_checks_permissions_for_issue_urls
@@ -276,6 +490,9 @@ class ThreadConnectionsTest < Minitest::Test
     [url, "#{url}#note-3", 'https://other.invalid/issues/7', '7oops'].each do |value|
       context do
         view = preview
+        source = CONNECTIONS.source_for('ATEST', 'TTEST', @viewer, submitted(view, {}))
+        source.delete('fixed_destination')
+        view['private_metadata'] = CONNECTIONS.signed_source('ATEST', 'TTEST', source)
         result = CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(view, {
           'issue' => { 'issue' => { 'value' => value } }
         }))
@@ -290,7 +507,7 @@ class ThreadConnectionsTest < Minitest::Test
     context do
       view = preview
       assert_equal({}, confirmation(view))
-      assert_equal 'errors', confirmation(view)['response_action']
+      assert_equal 'update', confirmation(view)['response_action']
       assert_equal 1, @queued.size
       drain_jobs
       assert_equal({}, confirmation(view))
@@ -314,7 +531,7 @@ class ThreadConnectionsTest < Minitest::Test
     context do
       view = preview
       @reject_enqueue = true
-      assert_equal 'errors', confirmation(view)['response_action']
+      assert_equal 'update', confirmation(view)['response_action']
       @reject_enqueue = false
       assert_empty @queued
       assert_equal({}, confirmation(view))
@@ -326,7 +543,7 @@ class ThreadConnectionsTest < Minitest::Test
     context do
       view = preview
       assert_equal({}, confirmation(view))
-      assert_equal 'errors', confirmation(view)['response_action']
+      assert_equal 'update', confirmation(view)['response_action']
       assert_equal 1, @queued.size
     end
   end
@@ -341,7 +558,7 @@ class ThreadConnectionsTest < Minitest::Test
       }) do
         assert_equal({}, confirmation(view))
         drain_jobs
-        assert_equal 'errors', confirmation(view)['response_action']
+        assert_equal 'update', confirmation(view)['response_action']
       end
       assert_equal 1, calls
     end

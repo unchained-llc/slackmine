@@ -231,6 +231,24 @@ class SlackEventsControllerTest < Minitest::Test
     assert_empty @handled
   end
 
+  def test_large_signed_thread_confirmation_is_allowed_but_other_large_forms_are_rejected
+    payload = { 'type' => 'view_submission', 'api_app_id' => 'ATEST', 'team' => { 'id' => 'TTEST' },
+      'view' => { 'callback_id' => 'slackmine_thread_connect_save', 'blocks' => ['x' * 70_000] } }
+    body = URI.encode_www_form('payload' => JSON.generate(payload))
+    Slackmine::ThreadConnections.stub(:interaction, ->(*) { {} }) do
+      assert_equal :ok, dispatch(raw: body).status
+      assert_equal :unauthorized, dispatch(raw: body, signature: 'v0=' + '0' * 64).status
+      payload['type'] = 'block_actions'
+      payload['actions'] = [{ 'action_id' => 'history_group_0' }]
+      assert_equal :ok, dispatch(raw: URI.encode_www_form('payload' => JSON.generate(payload))).status
+      payload['actions'] = [{ 'action_id' => 'unrelated' }]
+      assert_equal :payload_too_large, dispatch(raw: URI.encode_www_form('payload' => JSON.generate(payload))).status
+      payload['type'] = 'view_submission'
+      payload['view']['callback_id'] = 'other'
+      assert_equal :payload_too_large, dispatch(raw: URI.encode_www_form('payload' => JSON.generate(payload))).status
+    end
+  end
+
   def test_missing_trigger_and_unrelated_events_do_not_queue
     event = @payload['event'].merge('trigger_id' => '')
     assert_equal :bad_request, dispatch(@payload.merge('event' => event)).status

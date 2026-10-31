@@ -13,10 +13,15 @@ module Slackmine
 
     CALLBACK = 'slackmine_thread_connect'
     PICK_CALLBACK = 'slackmine_thread_connect_pick'
+    SELECT_CALLBACK = 'slackmine_thread_connect_select'
+    SEARCH_CALLBACK = 'slackmine_thread_connect_search'
     SAVE_CALLBACK = 'slackmine_thread_connect_save'
     MARKER_PREFIX = 'slackmine_connection:'
     MAX_HISTORY = 20
     MAX_SCAN = 1000
+    MAX_HISTORY_TEXT = 100_000
+    MAX_RECENT = 25
+    SELECTION_GROUP_SIZE = 100
     PREVIEW_DIRECT_SECONDS = 2
     # Keep this outside StandardError so prepare_preview's error-view rescue
     # cannot consume the deadline before pick can queue its fallback.
@@ -34,7 +39,14 @@ module Slackmine
 
     def handles?(payload)
       (payload['type'] == 'message_action' && payload['callback_id'] == CALLBACK) ||
-        (payload['type'] == 'view_submission' && [PICK_CALLBACK, SAVE_CALLBACK].include?(payload.dig('view', 'callback_id')))
+        (payload['type'] == 'block_suggestion' && payload['action_id'] == 'search_issue' && payload.dig('view', 'callback_id') == SEARCH_CALLBACK) ||
+        selection_action?(payload) ||
+        (payload['type'] == 'view_submission' && [PICK_CALLBACK, SELECT_CALLBACK, SEARCH_CALLBACK, SAVE_CALLBACK].include?(payload.dig('view', 'callback_id')))
+    end
+
+    def selection_action?(payload)
+      payload['type'] == 'block_actions' && payload.dig('view', 'callback_id') == SAVE_CALLBACK &&
+        Array(payload['actions']).any? { |action| action.is_a?(Hash) && action['action_id'].to_s.match?(/\A(?:post|history_group)_\d+\z/) }
     end
 
     def scope?(issue, app, team)
@@ -124,7 +136,11 @@ module Slackmine
       viewer = WorkObjects.viewer_for(payload.dig('user', 'id'))
       if payload['type'] == 'message_action'
         open_picker(app, team, viewer, payload)
-      elsif payload.dig('view', 'callback_id') == PICK_CALLBACK
+      elsif selection_action?(payload)
+        {}
+      elsif payload['type'] == 'block_suggestion'
+        suggestions(app, team, viewer, payload)
+      elsif [PICK_CALLBACK, SELECT_CALLBACK, SEARCH_CALLBACK].include?(payload.dig('view', 'callback_id'))
         pick(app, team, viewer, payload)
       else
         save(app, team, viewer, payload)
@@ -184,7 +200,7 @@ module Slackmine
                          .uniq { |m| m['ts'] }.sort_by { |m| ThreadComments.posted_at(m['ts']) }
         end
       end
-      raise 'Incomplete Slack thread history'
+      raise 'Thread exceeds 1000 messages'
     end
 
     def marker(app, team, source, message)
@@ -239,7 +255,9 @@ module Slackmine
       viewer = WorkObjects.viewer_for(source['slack_user'])
       raise 'Unknown user' unless viewer && viewer.id == source['user_id'] && enabled?
       verify_channel!(source['channel'], source['slack_user'], Slackmine.bot_token(nil))
-      current = connection(app, team, source, history(source))
+      existing_messages = history(source)
+      current = connection(app, team, source, existing_messages)
+      raise 'Thread exceeds connection capacity' if (!current || !current['active']) && existing_messages.size >= MAX_SCAN
       if current && current['active']
         issue = Issue.find_by(id: current['issue_id'])
         raise 'Permission denied' unless allowed?(issue, viewer, app, team)
@@ -248,15 +266,39 @@ module Slackmine
           input('issue', message('destination', project: issue&.project), { 'type' => 'plain_text_input', 'initial_value' => issue.id.to_s })],
           project: issue&.project, app: app, team: team, source: source, callback: SAVE_CALLBACK, submit: message('disconnect', project: issue&.project))
       else
-        option = { 'text' => { 'type' => 'plain_text', 'text' => message('save_history', project: issue&.project) }, 'value' => 'history' }
-        view = modal([section(message('picker_hint', project: issue&.project)),
-          input('issue', message('issue_number', project: issue&.project), { 'type' => 'plain_text_input' }),
-          input('history', message('history', project: issue&.project), { 'type' => 'checkboxes', 'options' => [option], 'initial_options' => [option] }, optional: true)],
-          project: issue&.project, app: app, team: team, source: source, callback: PICK_CALLBACK, submit: message('review', project: issue&.project))
+        blocks = [section(message('unified_picker_hint'))]
+        blocks << input('search_issue', message('issue_search'), { 'type' => 'external_select', 'min_query_length' => 0,
+          'placeholder' => { 'type' => 'plain_text', 'text' => message('search_placeholder') } })
+        view = modal(blocks,
+          project: issue&.project, app: app, team: team, source: source, callback: SEARCH_CALLBACK, submit: message('review', project: issue&.project))
       end
       update_view(view_id, view)
     rescue StandardError => e
       preview_error(view_id, e, project: issue&.project)
+    end
+
+    def issue_options(rows)
+      rows.map do |candidate|
+        { 'text' => { 'type' => 'plain_text', 'text' => "##{candidate.id} #{candidate.subject}"[0, 75] }, 'value' => candidate.id.to_s }
+      end
+    end
+
+    def suggestions(app, team, viewer, payload)
+      return { 'options' => [] } unless source_for(app, team, viewer, payload)
+      query = payload['value'].to_s.strip
+      return { 'options' => [] } if query.length > 500
+      if query.empty?
+        rows = Issue.visible(viewer).order(updated_on: :desc).limit(100).to_a
+      elsif (id = issue_reference_id(query))
+        rows = [Issue.find_by(id: id)].compact
+      else
+        rows = Issue.visible(viewer).where('LOWER(issues.subject) LIKE ?', "%#{Issue.sanitize_sql_like(query.downcase)}%")
+                    .order(updated_on: :desc).limit(100).to_a
+      end
+      { 'options' => issue_options(rows.select { |candidate| allowed?(candidate, viewer, app, team) }.first(MAX_RECENT)) }
+    rescue StandardError => e
+      Rails.logger&.error("Slackmine: connection suggestions failed: #{e.class}")
+      { 'options' => [] }
     end
 
     def issue_reference_id(value)
@@ -271,10 +313,47 @@ module Slackmine
     def pick(app, team, viewer, payload)
       source = source_for(app, team, viewer, payload)
       return error(message('invalid_review')) unless source
-      id = issue_reference_id(state(payload, 'issue')['value'])
+      selecting = payload.dig('view', 'callback_id') == SELECT_CALLBACK
+      searching = payload.dig('view', 'callback_id') == SEARCH_CALLBACK
+      value = state(payload, 'issue')['value'].to_s.strip
+      id = if searching
+             state(payload, 'search_issue').dig('selected_option', 'value')
+           elsif selecting
+             state(payload, 'choice').dig('selected_option', 'value')
+           elsif value.empty?
+             state(payload, 'recent').dig('selected_option', 'value')
+           else
+             issue_reference_id(value)
+           end
+      if !selecting && !searching && !id && !value.empty?
+        rows = Issue.visible(viewer).where('LOWER(issues.subject) LIKE ?', "%#{Issue.sanitize_sql_like(value.downcase)}%")
+                    .order(updated_on: :desc).limit(100).to_a.select { |candidate| allowed?(candidate, viewer, app, team) }.first(100)
+        return error(message('issue_denied')) if rows.empty?
+        options = issue_options(rows)
+        source = source.merge('history' => Array(state(payload, 'history')['selected_options']).any? { |o| o['value'] == 'history' })
+        view = modal([section(message('choose_search_result')),
+          input('choice', message('search_result'), { 'type' => 'static_select', 'options' => options })],
+          app: app, team: team, source: source, callback: SELECT_CALLBACK, submit: message('review'))
+        return { 'response_action' => 'update', 'view' => view }
+      end
+      id = nil unless id.to_s.match?(/\A[1-9]\d*\z/)
       issue = Issue.find_by(id: id) if id
-      return error(message('issue_denied', project: issue&.project)) unless allowed?(issue, viewer, app, team)
-      source = source.merge('issue_id' => issue.id, 'history' => Array(state(payload, 'history')['selected_options']).any? { |o| o['value'] == 'history' }, 'cutoff' => timestamp_now)
+      unless allowed?(issue, viewer, app, team)
+        field = searching ? 'search_issue' : (selecting ? 'choice' : 'issue')
+        return { 'response_action' => 'errors', 'errors' => { field => message('issue_denied', project: issue&.project) } }
+      end
+      has_history_control = payload.dig('view', 'blocks').to_a.any? { |block| block['block_id'] == 'history' }
+      history_selected = if selecting
+                           source['history']
+                         elsif searching && !has_history_control
+                           true
+                         else
+                           Array(state(payload, 'history')['selected_options']).any? { |o| o['value'] == 'history' }
+                         end
+      individual = searching && history_selected && (!has_history_control || Array(state(payload, 'history_mode')['selected_options']).any? { |o| o['value'] == 'individual' })
+      source = source.merge('issue_id' => issue.id, 'history' => history_selected, 'cutoff' => timestamp_now,
+                            'bulk_history' => searching, 'individual_history' => individual,
+                            'recent_selected' => searching || (!selecting && value.empty?))
       started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       begin
         view = Timeout.timeout(PREVIEW_DIRECT_SECONDS, PreviewDeadline) { prepare_preview(app, team, source) }
@@ -304,12 +383,54 @@ module Slackmine
         human_message?(m) && ThreadComments.posted_at(m['ts']) <= ThreadComments.posted_at(source['cutoff']) &&
           !ThreadComments.addressed_to_bot?(m, issue.project, cache: mention_cache)
       end
-      raise 'Past conversation exceeds 20 human posts' if messages.size > MAX_HISTORY
+      if source['bulk_history']
+        raise 'History text exceeds limit' if history_text_length(messages) > MAX_HISTORY_TEXT
+        raise 'History post exceeds limit' if messages.any? { |m| MessageShortcuts.message_text(m).length > 10_000 }
+        if !Slackmine.files_transfer_restricted?(issue.project) && messages.flat_map { |m| Array(m['files']).map { |f| f['id'] } }.compact.uniq.size > ThreadFiles::MAX_FILES
+          raise 'History files exceed limit'
+        end
+        digest = history_digest(messages)
+        source = source.merge('history_digest' => digest, 'history_count' => messages.size, 'ready' => true, 'fixed_destination' => true)
+        key = source['individual_history'] ? 'individual_preview' : (source['history'] ? 'bulk_preview_history' : 'bulk_preview_future')
+        blocks = [section(message(key, project: issue.project, id: issue.id, subject: issue.subject, count: messages.size))]
+        if source['individual_history'] && messages.size <= MAX_HISTORY
+          source = source.merge('selection_layout' => 'checkboxes')
+          cache = {}
+          call = lambda { |method, body| cache[[method, body]] ||= Slackmine.slack_api(method, body, Slackmine.bot_token(nil), form: true) }
+          messages.each_with_index do |item, index|
+            card = LinkCards.message_card(item, call)
+            text = MessageShortcuts.message_text(item)
+            shown = text.length > 2500 ? text[0, 2500] + '…' : text
+            preview = message('post_preview', project: issue.project, author: card['author'], timestamp: card['timestamp'], text: shown, count: Array(item['files']).size)
+            blocks << section(preview)
+            option = { 'text' => { 'type' => 'plain_text', 'text' => message('save_post', project: issue.project) }, 'value' => index.to_s }
+            blocks << { 'type' => 'actions', 'block_id' => "post_#{index}", 'elements' => [
+              { 'type' => 'checkboxes', 'action_id' => "post_#{index}", 'options' => [option], 'initial_options' => [option] }] }
+          end
+        elsif source['individual_history']
+          messages.each_slice(SELECTION_GROUP_SIZE).with_index do |group, group_index|
+            options = group.each_with_index.map do |item, index|
+              number = group_index * SELECTION_GROUP_SIZE + index
+              body = MessageShortcuts.message_text(item).gsub(/\s+/, ' ').strip
+              label = "#{number + 1}. #{item['user']} #{body.empty? ? message('attachment_only', project: issue.project) : body}"[0, 75]
+              { 'text' => { 'type' => 'plain_text', 'text' => label }, 'value' => number.to_s }
+            end
+            blocks << { 'type' => 'section', 'block_id' => "history_group_#{group_index}",
+              'text' => { 'type' => 'plain_text', 'text' => message('history_group', project: issue.project, number: group_index + 1) },
+              'accessory' => { 'type' => 'multi_static_select', 'action_id' => "history_group_#{group_index}", 'options' => options, 'initial_options' => options,
+                'placeholder' => { 'type' => 'plain_text', 'text' => message('history_group_placeholder', project: issue.project) } } }
+          end
+        end
+        view = modal(blocks,
+          project: issue.project, app: app, team: team, source: source, callback: SAVE_CALLBACK, submit: message('connect', project: issue.project))
+        return view_id ? update_view(view_id, view) : view
+      end
+      history_over_limit = messages.size > MAX_HISTORY
+      raise 'Past conversation exceeds 20 human posts' if history_over_limit
       cache = {}
       call = lambda { |method, body| cache[[method, body]] ||= Slackmine.slack_api(method, body, Slackmine.bot_token(nil), form: true) }
-      blocks = [section(message('preview_hint', project: issue.project, id: issue.id, subject: issue.subject)),
-                input('issue', message('destination_number', project: issue&.project), { 'type' => 'plain_text_input', 'initial_value' => issue.id.to_s })]
-      source = source.merge('posts' => messages.map { |m| [m['ts'], fingerprint(m)] }, 'ready' => true)
+      blocks = [section(message('preview_hint', project: issue.project, id: issue.id, subject: issue.subject))]
+      source = source.merge('posts' => messages.map { |m| [m['ts'], fingerprint(m)] }, 'ready' => true, 'fixed_destination' => true)
       messages.each_with_index do |m, index|
         card = LinkCards.message_card(m, call)
         text = MessageShortcuts.message_text(m)
@@ -317,13 +438,22 @@ module Slackmine
         preview = message('post_preview', project: issue.project, author: card['author'], timestamp: card['timestamp'], text: text, count: Array(m['files']).size)
         preview.scan(/.{1,2900}/m).each { |part| blocks << section(part) }
         option = { 'text' => { 'type' => 'plain_text', 'text' => message('save_post', project: issue&.project) }, 'value' => index.to_s }
-        blocks << input("post_#{index}", message('import', project: issue&.project), { 'type' => 'checkboxes', 'options' => [option], 'initial_options' => [option] }, optional: true)
+        blocks << { 'type' => 'actions', 'block_id' => "post_#{index}", 'elements' => [
+          { 'type' => 'checkboxes', 'action_id' => "post_#{index}", 'options' => [option], 'initial_options' => [option] }] }
       end
       raise 'Preview exceeds Slack block limit' if blocks.size > 100
       view = modal(blocks, project: issue.project, app: app, team: team, source: source, callback: SAVE_CALLBACK, submit: message('connect', project: issue&.project))
       view_id ? update_view(view_id, view) : view
     rescue StandardError => e
       preview_error(view_id, e, project: issue&.project)
+    end
+
+    def history_text_length(messages)
+      messages.map { |m| MessageShortcuts.message_text(m) }.join("\n\n").length
+    end
+
+    def history_digest(messages)
+      Digest::SHA256.hexdigest(JSON.generate(messages.map { |m| [m['ts'], fingerprint(m)] }))
     end
 
     def update_view(view_id, view)
@@ -333,7 +463,15 @@ module Slackmine
     def preview_error(view_id, error, project: nil)
       reason = error.message == 'Past conversation exceeds 20 human posts' ? 'history_limit' : error.class.to_s
       Rails.logger&.warn("Slackmine: connection preview failed: #{reason}")
-      view = modal([section(message('preview_failed', project: project))], project: project)
+      key = case error.message
+            when 'Past conversation exceeds 20 human posts' then 'individual_history_limit'
+            when 'History text exceeds limit' then 'bulk_history_text_limit'
+            when 'History post exceeds limit' then 'bulk_history_post_limit'
+            when 'History files exceed limit' then 'bulk_history_files_limit'
+            when 'Thread exceeds 1000 messages', 'Thread exceeds connection capacity' then 'bulk_thread_limit'
+            else 'preview_failed'
+            end
+      view = modal([section(message(key, project: project))], project: project)
       view_id ? update_view(view_id, view) : view
     end
 
@@ -341,28 +479,56 @@ module Slackmine
       source = source_for(app, team, viewer, payload)
       return error(message('invalid_review')) unless source
       issue = Issue.find_by(id: source['issue_id'])
-      return error(message('denied', project: issue&.project)) unless allowed?(issue, viewer, app, team)
-      entered_id = issue_reference_id(state(payload, 'issue')['value'])
-      return error(message('destination_changed', project: issue&.project)) unless entered_id == issue.id.to_s
-      return error(message('review_incomplete', project: issue&.project)) unless source['disconnect'] || source['ready']
+      return save_error(source, message('denied', project: issue&.project), issue&.project) unless allowed?(issue, viewer, app, team)
+      unless source['fixed_destination']
+        destination_id = source['recent_selected'] ? 'destination' : 'issue'
+        entered_id = issue_reference_id(state(payload, destination_id)['value'])
+        return { 'response_action' => 'errors', 'errors' => { destination_id => message('destination_changed', project: issue&.project) } } unless entered_id == issue.id.to_s
+      end
+      return save_error(source, message('review_incomplete', project: issue&.project), issue&.project) unless source['disconnect'] || source['ready']
       selected = Array(source['posts']).each_with_index.select do |_, index|
         Array(state(payload, "post_#{index}")['selected_options']).any? { |o| o['value'] == index.to_s }
       end.map(&:first)
+      if source['individual_history']
+        count = source['history_count'].to_i
+        return save_error(source, message('invalid_review'), issue&.project) unless count.between?(0, MAX_SCAN)
+        selected_indices = if source['selection_layout'] == 'checkboxes'
+          (0...count).select { |index| Array(state(payload, "post_#{index}")['selected_options']).any? { |option| option['value'] == index.to_s } }.map(&:to_s)
+        else
+          (0...((count + SELECTION_GROUP_SIZE - 1) / SELECTION_GROUP_SIZE)).flat_map do |group|
+          Array(state(payload, "history_group_#{group}")['selected_options']).map do |option|
+            value = option['value'].to_s
+            raise ArgumentError, 'Invalid selection group' unless value.match?(/\A(?:0|[1-9]\d*)\z/) && value.to_i / SELECTION_GROUP_SIZE == group
+            value
+          end
+          end
+        end
+        valid = selected_indices.all? { |value| value.match?(/\A(?:0|[1-9]\d*)\z/) && value.to_i < count } && selected_indices.uniq.size == selected_indices.size
+        return save_error(source, message('invalid_review'), issue&.project) unless valid
+        bits = Array.new((count + 7) / 8, 0)
+        selected_indices.each { |index| i = index.to_i; bits[i / 8] |= (1 << (i % 8)) }
+        source = source.merge('selection_bits' => Base64.strict_encode64(bits.pack('C*')))
+      end
       # Claim the signed confirmation before Slack writes or history imports.
       # Keep an uncertain outcome claimed, so a redelivery cannot repeat it.
       key = submission_key(app, team, viewer.id, source)
       cache = Rails.cache
       return {} if cache.read(key) == 'done'
-      return error(message('submission_pending', project: issue&.project)) unless cache.write(key, 'pending', unless_exist: true, expires_in: 86_400)
+      return save_error(source, message('submission_pending', project: issue&.project), issue&.project) unless cache.write(key, 'pending', unless_exist: true, expires_in: 86_400)
       job = SlackmineThreadConnectionJob.perform_later(app, team, source.merge('posts' => selected), nil, 'save')
       unless job
         cache.delete(key)
-        return error(message('submission_failed', project: issue&.project))
+        return save_error(source, message('submission_failed', project: issue&.project), issue&.project)
       end
       {}
     rescue StandardError => e
       Rails.logger&.error("Slackmine: connection submission failed: #{e.class}")
-      error(message('submission_failed', project: issue&.project))
+      save_error(source, message('submission_failed', project: issue&.project), issue&.project)
+    end
+
+    def save_error(source, text, project = nil)
+      return error(text) unless source && source['fixed_destination']
+      { 'response_action' => 'update', 'view' => modal([section(text)], project: project) }
     end
 
     def submission_key(app, team, user_id, source)
@@ -411,13 +577,30 @@ module Slackmine
       if current && current['active'] && current['nonce'] != source['nonce']
         return failure_notice(source, message('already_connected', project: issue&.project))
       end
-      selected = Array(source['posts']).map do |ts, digest|
-        message = messages.find { |m| m['ts'] == ts }
-        raise 'The selected conversation changed; preview again' unless message && human_message?(message) && fingerprint(message) == digest
-        message
+      if source['bulk_history']
+        mention_cache = {}
+        selected = source['history'] ? messages.select { |m| human_message?(m) && ThreadComments.posted_at(m['ts']) <= ThreadComments.posted_at(source['cutoff']) && !ThreadComments.addressed_to_bot?(m, issue.project, cache: mention_cache) } : []
+        raise 'The conversation changed; preview again' unless history_digest(selected) == source['history_digest'] && selected.size == source['history_count']
+        if source['individual_history']
+          bits = Base64.strict_decode64(source.fetch('selection_bits')).bytes
+          raise 'Invalid selection' unless bits.size == (selected.size + 7) / 8
+          selected = selected.each_with_index.select { |_, index| (bits[index / 8] & (1 << (index % 8))) != 0 }.map(&:first)
+        end
+        raise 'History text exceeds limit' if history_text_length(selected) > MAX_HISTORY_TEXT
+        raise 'History post exceeds limit' if selected.any? { |m| MessageShortcuts.message_text(m).length > 10_000 }
+        if !Slackmine.files_transfer_restricted?(issue.project) && selected.flat_map { |m| Array(m['files']).map { |f| f['id'] } }.compact.uniq.size > ThreadFiles::MAX_FILES
+          raise 'History files exceed limit'
+        end
+      else
+        selected = Array(source['posts']).map do |ts, digest|
+          message = messages.find { |m| m['ts'] == ts }
+          raise 'The selected conversation changed; preview again' unless message && human_message?(message) && fingerprint(message) == digest
+          message
+        end
+        raise 'Selected text exceeds 10000 characters' if history_text_length(selected) > 10_000
       end
-      raise 'Selected text exceeds 10000 characters' if selected.map { |m| MessageShortcuts.message_text(m) }.join("\n\n").length > 10_000
       unless current && current['active']
+        raise 'Thread exceeds connection capacity' if messages.size >= MAX_SCAN
         posted = post_marker(app, team, source, active: true)
         messages = history(source)
         current = connection(app, team, source, messages)

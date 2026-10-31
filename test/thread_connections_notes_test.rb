@@ -61,6 +61,19 @@ class ThreadConnectionsNotesTest < Minitest::Test
     assert_empty @calls
   end
 
+  def test_bulk_history_over_10000_characters_saves_every_quote
+    @entries = 100.times.map do |index|
+      event = @event.merge('ts' => format('1791115%03d.000001', index), 'text' => "#{index}: " + 'x' * 120)
+      { 'event' => event, 'card' => { 'author' => 'Alice', 'text' => event['text'],
+        'timestamp' => Slackmine::ThreadComments.posted_at(event['ts']).iso8601,
+        'channel' => 'discussion', 'thread_connection_nonce' => 'a' * 32 } }
+    end
+    assert_equal :saved, persist
+    cards = Slackmine::LinkQuotes.blocks(@journal.notes).map(&:last)
+    assert_equal 100, cards.size
+    assert_equal @entries.map { |entry| entry['event']['text'] }, cards.map { |card| card['text'] }
+  end
+
   def test_configured_history_heading_preserves_speakers_and_deduplication
     assert_equal :saved, persist('history_heading' => 'Conversation imported before connection')
     assert_includes @journal.notes, 'Conversation imported before connection'

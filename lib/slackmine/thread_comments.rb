@@ -229,7 +229,7 @@ module Slackmine
         next :duplicate if legacy_duplicate && !history_cards
         viewer = import_viewer || WorkObjects.viewer_for(event['user'])
         allowed = viewer && issue.project.active? && !issue.is_private? && issue.visible?(viewer) &&
-                  issue.notes_addable?(viewer) && event['text'].to_s.length <= 10_000
+                  issue.notes_addable?(viewer) && event['text'].to_s.length <= (history_cards ? ThreadConnections::MAX_HISTORY_TEXT : 10_000)
         next :restricted unless allowed
         # The existing comment author and original posting time identify a
         # retry, even after the comment text has been edited in Redmine.
