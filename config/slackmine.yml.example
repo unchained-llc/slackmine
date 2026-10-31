@@ -67,6 +67,9 @@ slack:
   # Existing event cards remain. Deleted Issues and due-date DMs are excluded.
   # Override per project with projects.<identifier>.slack.work_object_previews.
   work_object_previews: false
+  # Fetch OGP and add compact URL cards in public issue comments.
+  # Defaults to false; project overrides are supported.
+  url_previews: false
   # Show editable Issue fields and actions on all public Issue Work Object
   # cards when true. Omitted or false disables actions.
   # Redmine user mapping and permissions are checked again on submission.

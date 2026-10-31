@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.7.5**.
+Version **1.7.6**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -386,6 +386,25 @@ Existing `metadata.issue.created` / `metadata.issue.updated` maps are still read
 Issue creation includes the description. New comments include their text. An Issue update shows only enabled detail changes and, when applicable, a description diff. A Wiki update shows the edit comment if provided and a body diff when its text changed; Wiki creation does not include the full page body. News creation includes a summary of its description. Deleted comments display removed lines. The record title links to the full content in Redmine.
 
 Redmine Markdown is converted for Slack text. Numbered lists use Slack `markdown` blocks so repeated `1.` markers render as an ordered list. Markdown tables in notification summaries, comments, and changed bodies use Slack `markdown` blocks so pipe tables render as tables; this applies to Issue and non-Issue notifications. Content over Slack's 12,000-character Markdown-block limit falls back to [`mrkdwn`](https://docs.slack.dev/messaging/formatting-message-text/) sections.
+
+### URL previews in comment notifications
+
+Set `slack.url_previews: true` to add compact previews with a right-side image for HTTP(S) URLs and `www.` links in public Issue comments. Omitted or `false` preserves existing notifications. Project overrides are supported.
+
+```yaml
+slack:
+  url_previews: true
+projects:
+  another-project:
+    slack:
+      url_previews: false
+```
+
+Previews appear in notifications for public Issue comments. URLs in code, deleted comments, and notifications subject to file-transfer restrictions are excluded. If page information cannot be retrieved, the notification is still sent.
+
+The Redmine worker fetches page information, and Slack loads the image. Local and private addresses are rejected, including redirect destinations. If Slack rejects an image, the preview is sent without it. Notification visibility is checked before and after retrieval. When a notification approaches Slack's block limit, only previews that fit are included.
+
+No additional Slack scope is required. Restart Redmine and job workers after changing the setting. Queued notifications use the setting in effect when they are sent.
 
 ### Ticket Work Object Previews
 
@@ -1325,6 +1344,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **1.7.6** | Add optional compact URL previews with titles, descriptions, and images to public issue comment notifications. Enable them through YAML. |
 | **1.7.5** | Add the current subject to the Slack issue edit modal. Save subject changes with permission checks and Redmine history, and refresh the card title. |
 | **1.7.4** | Display newly referenced images in comment diff notifications, including URL-encoded filenames and files attached after the comment was created. Do not repeat unchanged images when only text is edited. |
 | **1.7.3** | Accept Redmine issue URLs as well as issue numbers when connecting Slack threads, including URLs with query parameters or comment anchors. |

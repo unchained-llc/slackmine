@@ -147,6 +147,9 @@ module Slackmine
           outgoing = source['payload'].merge('attachments' => outgoing.fetch('attachments') + source['payload'].fetch('attachments'))
         end
       end
+      if sources.any? { |source| source['payload']['unfurl_links'] == false }
+        outgoing = outgoing.merge('unfurl_links' => false, 'unfurl_media' => false)
+      end
       [outgoing, parts]
     end
 

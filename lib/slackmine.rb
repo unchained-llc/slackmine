@@ -494,6 +494,7 @@ module Slackmine
       add_images(payload, image_names, journal_id, token, issue_id: issue_id) if image_names.present? && (journal_id || issue_id)
       # Profile/file API calls can take time; recheck after them as well.
       return if context && !NotificationSafety.allowed?(context, project)
+      payload = UrlPreview.mark(payload, project: project, journal_id: journal_id, context: context)
       notification_parts = NotificationCoalescing.extract_parts!(payload)
       NotificationCoalescing.deliver(payload, project: project, context: context,
                                      actor_id: notification_actor_id, channel: channel, token: token,
@@ -586,6 +587,9 @@ module Slackmine
         update['metadata'] = payload['metadata']
         update['text'] = payload['text']
       end
+      if payload['unfurl_links'] == false
+        update.merge!('unfurl_links' => false, 'unfurl_media' => false)
+      end
       post_with_image_retry(update, token, method: 'chat.update')
     rescue StandardError => e
       # The initial message already contains the complete colored card. Do
@@ -597,6 +601,7 @@ module Slackmine
 
   def post_with_image_retry(request, token, method: 'chat.postMessage')
     retries = 0
+    preview_image_retry = false
     begin
       # Match Slack's Work Object documentation and official SDK transport:
       # entity metadata is JSON-serialized inside a URL-encoded form.
@@ -616,6 +621,14 @@ module Slackmine
       end
       result
     rescue SlackApiError => e
+      if !preview_image_retry && %w[invalid_blocks invalid_attachments].include?(e.code)
+        fallback = UrlPreview.without_preview_images(request)
+        if fallback
+          request = fallback
+          preview_image_retry = true
+          retry
+        end
+      end
       image_message = Array(request['blocks']).any? { |block| block['type'] == 'image' || block.dig('accessory', 'slack_file', 'id') } ||
         Array(request['attachments']).any? { |attachment| Array(attachment['blocks']).any? { |block| block['type'] == 'image' } }
       raise unless image_message && e.unready_image_file? && retries < 3
@@ -766,6 +779,7 @@ require_relative 'slackmine/comment_threads'
 require_relative 'slackmine/channel_matching'
 require_relative 'slackmine/admin_overview'
 require_relative 'slackmine/job_monitor'
+require_relative 'slackmine/url_preview'
 require_relative 'slackmine/notification_safety'
 require_relative 'slackmine/notification_coalescing'
 require_relative 'slackmine/mail_preference'
