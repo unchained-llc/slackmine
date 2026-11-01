@@ -2018,7 +2018,9 @@ class ImageNotificationTest < Minitest::Test
       response
     end
 
-    Net::HTTP.stub(:start, ->(*, &block) { block.call(http) }) do
+    pool = Object.new
+    pool.define_singleton_method(:request) { |request, **| http.request(request) }
+    Slackmine.stub(:slack_http_pool, pool) do
       Slackmine.slack_api(
         'files.getUploadURLExternal',
         { 'filename' => 'clipboard.png', 'length' => 42 },

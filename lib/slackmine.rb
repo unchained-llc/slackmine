@@ -5,6 +5,7 @@ require 'json'
 require 'uri'
 require 'yaml'
 require 'digest'
+require_relative 'slackmine/slack_http_pool'
 
 module Slackmine
   EVENT_PATHS = {
@@ -751,15 +752,13 @@ module Slackmine
       request['Content-Type'] = 'application/json; charset=utf-8'
       request.body = body.to_json
     end
-    Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: open_timeout, read_timeout: read_timeout) do |http|
-      response = http.request(request)
-      result = JSON.parse(response.body)
-      unless response.is_a?(Net::HTTPSuccess) && result['ok']
-        raise SlackApiError.new(method, response.code, result)
-      end
-
-      result
+    response = slack_http_pool.request(request, open_timeout: open_timeout, read_timeout: read_timeout)
+    result = JSON.parse(response.body)
+    unless response.is_a?(Net::HTTPSuccess) && result['ok']
+      raise SlackApiError.new(method, response.code, result)
     end
+
+    result
   end
 end
 

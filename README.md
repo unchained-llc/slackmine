@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **2.0.0**.
+Version **2.0.1**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1414,6 +1414,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.1** | Reuse Slack API connections to speed up Slack integration. Existing configuration remains compatible. |
 | **2.0.0** | Move thread connections and message deduplication to Sidekiq Redis; existing threads must be reconnected. Rename the job queue to `slackmine`, add connection feedback cleanup configuration, and improve administration filters. |
 | **1.8.0** | Optionally display Slack profile pictures as Redmine avatars, with existing avatars as a fallback. |
 | **1.7.7** | Search for an Issue by title, number, or URL when connecting a Slack thread, and select past messages to import from the review screen. |

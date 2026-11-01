@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **2.0.0**。
+バージョン **2.0.1**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -1380,6 +1380,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **2.0.1** | Slack APIへの接続を再利用し、Slackとの連携処理を高速化しました。既存の設定はそのまま使えます。 |
 | **2.0.0** | スレッドの接続状態と発言の重複判定をSidekiqのRedisに移行。旧接続は再接続が必要です。ジョブのキューを `slackmine` に変更し、接続通知の削除設定と管理画面のフィルターを追加・改善しました。 |
 | **1.8.0** | RedmineのアバターにSlackのプロフィール画像を任意で表示できます。画像を使えない場合は従来のアバターを表示します。 |
 | **1.7.7** | Slackスレッドの接続先をタイトル・番号・URLで検索し、確認画面で取り込む過去の発言を選べます。 |
