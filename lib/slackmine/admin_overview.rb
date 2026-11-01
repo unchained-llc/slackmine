@@ -10,15 +10,16 @@ module Slackmine
       'slack.files.restrict_transfer' => false, 'slack.files.force_restrict_transfer' => false,
       'slack.link_cards.enabled' => true, 'slack.link_cards.redmine_enabled' => true,
       'slack.link_cards.mail_enabled' => true, 'slack.link_cards.color' => '#6D5DFB',
+      'slack.link_cards.sign_quotes' => true, 'slack.link_cards.verify_signatures' => true,
       'slack.slash_command' => nil, 'slack.bot_token' => nil, 'slack.default_channel_id' => nil,
       'slack.auto_map_users_by_name' => false, 'slack.auto_map_users_by_email' => false,
       'slack.use_slack_avatars' => false,
-      'slack.auto_map_channels_by_name' => false, 'slack.work_object_previews' => false,
+      'slack.auto_map_channels_by_name' => false, 'slack.work_object_previews' => false, 'slack.url_previews' => false,
       'slack.work_object_actions' => false, 'slack.work_object_start_status_id' => nil,
       'slack.work_object_complete_status_id' => nil, 'slack.thread_comments' => false,
       'slack.thread_connections' => true, 'slack.suppress_thread_comment_notifications' => true,
       'slack.thread_comment_batch.wait_seconds' => 0, 'slack.thread_comment_batch.max_wait_seconds' => 300,
-      'slack.thread_comment_feedback_cleanup_seconds' => -1, 'slack.app_home' => false,
+      'slack.thread_comment_feedback_cleanup_seconds' => -1, 'slack.thread_connection_feedback_cleanup_seconds' => -1, 'slack.app_home' => false,
       'slack.notification_coalescing.enabled' => false, 'slack.notification_coalescing.seconds' => 300,
       'slack.comment_notifications_in_threads' => false, 'slack.events.app_id' => nil,
       'slack.events.team_id' => nil, 'slack.events.signing_secret' => nil,
@@ -109,14 +110,14 @@ module Slackmine
 
     EXPLAINED_SETTINGS = %w[
       slack.files.restrict_transfer slack.files.force_restrict_transfer
-      slack.link_cards.enabled slack.link_cards.redmine_enabled slack.link_cards.mail_enabled
+      slack.link_cards.enabled slack.link_cards.redmine_enabled slack.link_cards.mail_enabled slack.link_cards.sign_quotes slack.link_cards.verify_signatures
       slack.link_cards.color slack.link_cards.link_text slack.slash_command slack.bot_token
       slack.default_channel_id slack.use_slack_avatars slack.auto_map_users_by_name slack.auto_map_users_by_email
-      slack.auto_map_channels_by_name slack.work_object_previews slack.work_object_actions
+      slack.auto_map_channels_by_name slack.work_object_previews slack.url_previews slack.work_object_actions
       slack.work_object_start_status_id slack.work_object_complete_status_id
       slack.thread_comments slack.thread_connections slack.suppress_thread_comment_notifications
       slack.thread_comment_batch.wait_seconds slack.thread_comment_batch.max_wait_seconds
-      slack.thread_comment_feedback_cleanup_seconds slack.app_home slack.comment_notifications_in_threads
+      slack.thread_comment_feedback_cleanup_seconds slack.thread_connection_feedback_cleanup_seconds slack.app_home slack.comment_notifications_in_threads
       slack.notification_coalescing.enabled slack.notification_coalescing.seconds
       slack.events.app_id slack.events.team_id slack.events.signing_secret
       slack.body_diff slack.attachment_color slack.issue_changes_when_hidden

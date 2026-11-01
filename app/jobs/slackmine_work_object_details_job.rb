@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineWorkObjectDetailsJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(app_id, team_id, event)
     Slackmine::WorkObjects.present_details(app_id, team_id, event)

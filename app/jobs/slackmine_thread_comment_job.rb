@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineThreadCommentJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(app_id, team_id, event, batch_ready = false)
     if batch_ready

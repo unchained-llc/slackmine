@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 class SlackmineThreadCommentFeedbackCleanupJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
-  def perform(project_id, channel, timestamp)
+  def perform(project_id, channel, timestamp, kind = 'comment')
     project = Project.find_by(id: project_id)
-    return unless project && Slackmine::ThreadComments.feedback_cleanup_seconds(project) != -1
+    return unless project && Slackmine::ThreadFeedback.cleanup_seconds(project, kind) != -1
 
     token = Slackmine.bot_token(project)
     return if token.to_s.empty?

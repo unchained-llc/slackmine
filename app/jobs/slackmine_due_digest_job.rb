@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineDueDigestJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   MAX_ISSUES_PER_MESSAGE = 100
 

@@ -4,11 +4,11 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **1.8.0**.
+Version **2.0.0**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
-A Redmine 7 plugin that sends Issue, Wiki, News, Document, file, forum, time entry, Version, and Project events to Slack. It can also send daily Issue due-date reminders to assignees by Slack DM. Notifications use a colored Block Kit attachment with a link to the Redmine record. Delivery runs through ActiveJob, normally on Sidekiq's `slack` queue.
+A Redmine 7 plugin that sends Issue, Wiki, News, Document, file, forum, time entry, Version, and Project events to Slack. It can also send daily Issue due-date reminders to assignees by Slack DM. Notifications use a colored Block Kit attachment with a link to the Redmine record. Delivery runs through ActiveJob, normally on Sidekiq's `slackmine` queue.
 
 The plugin provides notifications, Work Object actions, and optional slash commands. It does not add project settings tabs or Redmine custom fields.
 
@@ -22,7 +22,7 @@ The plugin provides notifications, Work Object actions, and optional slash comma
 | [Issue Work Object previews](#ticket-work-object-previews) | Display Issue cards and details inside Slack, with configurable fields and current data fetched when details open. |
 | [Issue actions in Slack](#work-object-card-and-detail-actions) | Edit permitted status, assignee, priority, and due date; add comments; assign to yourself; start/complete work; watch/unwatch. The time-entry action opens the Redmine form. |
 | [Comment notification threads](#threaded-redmine-comment-notifications) | Group Redmine Issue comment notifications in a Slack thread. |
-| [Connect a conversation to an existing Issue](#connect-a-slack-thread-to-an-existing-issue) | Use a message shortcut, review/select past posts as one connecting-user comment, and import future replies/files under mapped users. Consecutive posts by the same speaker share one standard card with one header and Slack link; a speaker change starts another card, preserving conversation order. Disconnect from the same menu. Enabled by default; signed Bot posts in Slack hold the connection without a plugin table or migration. |
+| [Connect a conversation to an existing Issue](#connect-a-slack-thread-to-an-existing-issue) | Connect and review a Slack thread, select past posts to import, and save future replies. Redis stores connection and deduplication state without a plugin table. |
 | [Slack replies to Redmine comments](#add-redmine-comments-from-notification-threads) | Save text/file replies in supported notification threads as Redmine comments and attachments under the mapped user's identity. |
 | [Slash commands](#slash-command) | Find Issues, list your assigned/due Issues, request a personal reminder digest, create Issues, add comments, and change status or assignee through forms or direct command arguments. Single-Issue results can use Work Object cards, with text fallback when previews are disabled. |
 | [Create an Issue from a Slack message](#create-an-issue-from-a-slack-message) | Use a message shortcut, choose a permitted project, and review a new-Issue form prefilled with the selected message and its source link. |
@@ -47,7 +47,7 @@ See the [Slack scopes and feature setup tables](#slack-scopes-and-feature-setup)
 - To use automatic user matching for the [personal email preference](#personal-email-preference), add both [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) and [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/), then reinstall the Slack app.
 - A Slack channel for each project, or a default channel. Invite the bot to each destination channel, including private channels.
 - For due-date DMs or results from long-running form saves, turn on the Slack app's **App Home → Display Messages tab** setting.
-- An ActiveJob worker that processes the `slack` queue. Sidekiq is recommended in production.
+- An ActiveJob worker that processes the `slackmine` queue. Sidekiq is recommended in production.
 
 1. From the Redmine application root, clone this repository into `plugins/slackmine`:
 
@@ -55,10 +55,66 @@ See the [Slack scopes and feature setup tables](#slack-scopes-and-feature-setup)
    git clone https://github.com/unchained-llc/slackmine.git plugins/slackmine
    ```
 
-2. Copy the [behavior configuration example](config/slackmine.yml.example) to the application's `config/slackmine.yml`.
-3. Set the Bot Token and a default or project-specific channel ID. To use Japanese wording, copy the [Japanese message example](config/slackmine.messages.ja.yml.example) to `config/slackmine.messages.yml`; to customize English wording, start from the [English message example](config/slackmine.messages.yml.example). Keep the real configuration files out of Git.
-4. Configure Sidekiq to process the `slack` queue and invite the bot to the configured channels.
-5. Restart Redmine and Sidekiq. Both processes cache the YAML configuration.
+2. Run `bundle install` in the Redmine root to install the plugin Gemfile dependencies.
+3. Copy the [behavior configuration example](config/slackmine.yml.example) to the application's `config/slackmine.yml`.
+4. Set the Bot Token and a default or project-specific channel ID. To use Japanese wording, copy the [Japanese message example](config/slackmine.messages.ja.yml.example) to `config/slackmine.messages.yml`; to customize English wording, start from the [English message example](config/slackmine.messages.yml.example). Keep the real configuration files out of Git.
+5. Configure [Sidekiq and Redis](#sidekiq-and-redis-setup) and invite the bot to the configured channels.
+6. Restart Redmine and Sidekiq. Both processes cache the YAML configuration.
+
+### Sidekiq and Redis setup
+
+In the Redmine application's `config/environments/production.rb`, add the following inside `Rails.application.configure do`. The plugin Gemfile does not automatically load Sidekiq, so add `require 'sidekiq'` at the top of the file unless the application already loads it.
+
+```ruby
+config.active_job.queue_adapter = :sidekiq
+```
+
+Connect the Web and Sidekiq worker processes to the same Sidekiq Redis (or Valkey). Use the existing Sidekiq connection; Slackmine does not need a separate connection. Thread connections and deduplication also depend on Redis, so enable persistence and backups and configure `noeviction`. See [Sidekiq's Redis configuration](https://github.com/sidekiq/sidekiq/wiki/Using-Redis).
+
+Add the `slackmine` queue to the Redmine application's `config/sidekiq.yml`, keeping `default`, `mailers`, and any other queues the application uses. Review the [queue example and priorities](#delivery-and-operations), then start the separate worker:
+
+```sh
+RAILS_ENV=production bundle exec sidekiq
+```
+
+Size the Redmine database connection pool for Sidekiq's concurrency. When embedding Sidekiq in Puma, each worker shares a pool between Web and Sidekiq threads, so account for both. Embedded Sidekiq does not read `sidekiq.yml`; configure its queues and concurrency in Puma instead. See the [Sidekiq embedding guide](https://github.com/sidekiq/sidekiq/wiki/Embedding) for setup and limitations.
+
+#### Example: embedding Sidekiq in Puma
+
+With Sidekiq 7 or later and Puma 7 or later, Sidekiq can run inside each Puma worker instead of a separate process. Add the following to the Redmine application's `config/puma.rb`. If it already sets `threads` or `workers`, adjust those settings rather than duplicating them.
+
+```ruby
+require 'sidekiq'
+
+web_threads = Integer(ENV.fetch('RAILS_MAX_THREADS', 5))
+sidekiq_threads = 2
+ENV['REDMINE_DB_POOL'] ||= (web_threads + sidekiq_threads).to_s
+
+threads web_threads, web_threads
+workers 2
+preload_app!
+
+embedded_sidekiq = nil
+before_worker_boot do
+  embedded_sidekiq = Sidekiq.configure_embed do |config|
+    config.queues = %w[default mailers slackmine]
+    config.concurrency = sidekiq_threads
+  end
+  embedded_sidekiq.run
+end
+
+before_worker_shutdown do
+  embedded_sidekiq&.stop
+end
+```
+
+For this example, also set `pool` in the Redmine application's `config/database.yml` as follows. Processes outside Puma use `RAILS_MAX_THREADS` or 5.
+
+```yaml
+pool: <%= ENV['REDMINE_DB_POOL'] || ENV['RAILS_MAX_THREADS'] || 5 %>
+```
+
+Each Puma worker starts Sidekiq, so total job concurrency is `workers × sidekiq_threads`. Allow database connections for every worker's pool and other processes such as cron. Stop any separate Sidekiq worker that is no longer needed when switching to embedding. Puma's phased restart is not supported with embedded Sidekiq; see [Sidekiq's embedding limitations](https://github.com/sidekiq/sidekiq/wiki/Embedding).
 
 ### Slack scopes and feature setup
 
@@ -83,7 +139,7 @@ Notifications and message responses share the [`chat:write`](https://docs.slack.
 | Feature | Required Slack scopes | Additional Slack app setup | YAML and operational requirements |
 | --- | --- | --- | --- |
 | [Slack avatars](#slack-avatars-in-redmine) | [`users:read`](https://docs.slack.dev/reference/scopes/users.read/); email matching also requires [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) | — | `slack.use_slack_avatars: true`, user mapping, shared web/worker Rails cache |
-| Channel notifications | [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) | Invite the bot to the destination | Bot Token, destination channel, `slack` queue worker |
+| Channel notifications | [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) | Invite the bot to the destination | Bot Token, destination channel, `slackmine` queue worker |
 | [Inline Issue images](#inline-issue-images) | [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) | — | Supported images attached to Redmine |
 | [Assignee mentions](#assignee-mentions) | No extra scope for explicit mappings; [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) for automatic name matching | — | `users` or `slack.auto_map_users_by_name: true` |
 | [Match viewers by email](#match-viewers-by-email) | [`users:read`](https://docs.slack.dev/reference/scopes/users.read/), [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) | — | `slack.auto_map_users_by_email: true`, `slack.events.team_id` |
@@ -461,7 +517,7 @@ users:
   alice: 'U0123456789' # Replace with the actual Slack member ID
 ```
 
-1. Deploy the code and YAML, restart Redmine and Sidekiq, and ensure Sidekiq consumes the `slack` queue.
+1. Deploy the code and YAML, restart Redmine and Sidekiq, and ensure Sidekiq consumes the `slackmine` queue.
 2. Enable **Event Subscriptions** in the Slack app. Set Request URL to `https://redmine.example.com/slackmine/events` and confirm **Verified**. Adjust the host and any Redmine installation subdirectory for your deployment.
 3. Add [`entity_details_requested`](https://docs.slack.dev/reference/events/entity_details_requested/) under **Subscribe to bot events** and **Save Changes**. No additional OAuth scopes are required for this event or [`entity.presentDetails`](https://docs.slack.dev/reference/methods/entity.presentDetails/).
 4. Open a Work Object card and check status, assignee, due date, and description. Change the Issue in Redmine and refresh the detail pane to verify the current values. A new notification is unnecessary.
@@ -512,7 +568,7 @@ The main card Add comment button opens a comment-only modal. It requires comment
 
 ### Work Object card and detail actions
 
-Work Object details, form opening, and short edits run in the receiving Web process. Post-save card and App Home refreshes and URL unfurls use the `slack` queue. Edits containing Slack links also queue their save because quote imports may take longer; detail-panel results go to the Slack app Messages tab. Thread connection opens a loading form immediately and tries history review in the Web process; reviews exceeding two seconds fall back to Sidekiq. Connection saving stays queued. App Home list publishing and slash command delivery use Sidekiq. Notifications, reminders, and reply imports continue to use jobs.
+Work Object details, form opening, and short edits run in the receiving Web process. Post-save card and App Home refreshes and URL unfurls use the `slackmine` queue. Edits containing Slack links also queue their save because quote imports may take longer; detail-panel results go to the Slack app Messages tab. Thread connection opens a loading form immediately and tries history review in the Web process; reviews exceeding two seconds fall back to Sidekiq. Connection saving stays queued. App Home list publishing and slash command delivery use Sidekiq. Notifications, reminders, and reply imports continue to use jobs.
 
 Identical interaction redeliveries are suppressed by storing a SHA-256 digest of the verified body and an acceptance marker in the existing `Rails.cache` for ten minutes. Submitted text and permissions are not cached. Suppression across Web processes requires a shared cache with atomic `unless_exist` support. Cache loss or disabling the cache can still allow duplicates; a failure before saving also prevents replay of that same request. Check the Redmine result before starting a new action.
 
@@ -703,13 +759,13 @@ When effective `restrict_transfer` or global `force_restrict_transfer` is `true`
 
 Normal file imports (including file-only posts) require the Bot Token scope [`files:read`](https://docs.slack.dev/reference/scopes/files.read/); reinstall the app after adding it. PDF, Office documents, archives, text files and other Slack-hosted files are downloaded using bot authorization and saved as ordinary Redmine Issue attachments under the replying user. PNG, JPEG, GIF and WebP images are validated and displayed inline. Other formats, including SVG and video, are saved as `attachment:"filename"` references and shown as filename links to Redmine’s attachment viewer. Preview availability depends on Redmine and the file type. The importer records attachment IDs in the saved Slack quote metadata so only explicitly associated attachments appear inside their card, between the message body and “Open in Slack”. Ordinary notes and older replies without this metadata keep their existing layout; when no card is available, attachment references remain below the source permalink. Image references use attachment filenames, preserving `@2x` suffixes for Redmine’s image sizing. A reply can contain up to 10 files, each no larger than 10 MiB or Redmine’s configured attachment limit (whichever is lower), and at most 50 MiB in total. Redmine attachment permissions and extension restrictions apply. Files and the comment are saved in the same transaction; a failed download or invalid attachment does not leave a partial comment. Retries do not duplicate saved attachments. External files are unsupported. Rejected file replies receive failure feedback; transient API/network errors are retried by the job.
 
-No extra tables, DB migrations, or Redis processing-state entries are required. The plugin fetches only the parent notification through [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history/), verifies its app ID and canonical Issue subject URL, and accepts replies only in channels currently configured as notification destinations. Existing notifications are supported. Replies to other apps, users, or arbitrary Issue links are ignored.
+No extra tables or migrations are required. Redis stores connection and per-message deduplication state. The plugin verifies the parent notification using [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history/), its app ID and canonical Issue URL.
 
 Work Object cards can appear in history responses as only a `from_url` and attachment ID while Slack prepares the full card. The plugin also recognizes this reduced form when the authenticated app notification's first Issue reference in its fallback matches the single canonical card URL. Conflicting or ambiguous references remain ignored. Successful comment saves receive a confirmation in the same Slack thread.
 
-Authorization requires an explicit `users` mapping or enabled unique email matching to an active Redmine user, Issue visibility, and tracker-aware permission to add notes. Private Issues, inactive projects, and unmapped users are denied. Replies with up to 10,000 characters are accepted. The comment stores the source message permalink; the existing quote importer can save its text and display it as a card when link cards are enabled. The existing Journal `created_on` and `updated_on` are both set to the original Slack posting time, parsed without floating-point conversion, so a new imported comment is not marked as edited. Later Redmine edits update the normal edit timestamp. The Issue, mapped author, and posting time identify repeated deliveries. The existing Issue row lock serializes duplicate checks and comment saves. No additional tables, columns, Redis state, or state files are required. Editing the comment text does not affect duplicate detection. Legacy comments containing provenance lines are still recognized as duplicates.
+Authorization requires an explicit `users` mapping or enabled unique email matching, Issue visibility and permission to add notes. Private Issues, inactive projects and unmapped users are denied. Replies are limited to 10,000 characters. Slack timestamps are preserved for display; deduplication instead uses Redis keys derived from the Issue, workspace, channel and Slack message timestamp, under the existing Issue row lock.
 
-Reliable duplicate detection requires the existing `journals.created_on` column to preserve microseconds (six fractional digits). Lower timestamp precision may treat distinct replies from the same author as duplicates. A different comment by the same mapped author on the same Issue at the exact same timestamp is also treated as a duplicate. Deleting the comment or changing its author or posting time removes its duplicate protection. Existing provenance lines are not removed automatically.
+Redis data loss can cause lost connections and duplicate imports. If a failure occurs between the Redmine commit and Redis finalization, the next attempt checks the recorded journal and source permalink. If the saved source can no longer be verified, it fails closed for manual review. Existing Slack-stored connections and previously imported IDs are not migrated: reconnect old threads and avoid reimporting old posts if duplicates are undesirable.
 
 Customize the service name shown in Work Object cards and detail headers/open buttons with `messages.work_objects.product_name` (default: `Redmine`). Thread reply feedback supports `%{id}` and `%{product_name}`. References using `#%{id}` automatically link to the Issue, including success and restriction feedback. All these keys support overrides under `projects.<identifier>.messages`.
 
@@ -941,7 +997,7 @@ From a message's **More actions** menu, choose **Connect a thread to an existing
 
 Use **Create an Issue from a message** for the creation shortcut and **Connect a thread to an existing Issue** for this connection shortcut. Creation copies only the selected message; connection applies to the whole thread. Rename shortcut labels without changing their callback IDs.
 
-Open the same shortcut again to disconnect. Saved comments remain. If a connection-time import fails, check the saved thread and Issue state before starting a new action. Future reply events retain Slack queue retries. If the conversation changes after confirmation, disconnect and review it again. Reconnecting starts a new review; importing the same history again creates another quoted comment, so turn history import off when it is no longer needed.
+Open the same shortcut again to disconnect. Saved comments remain. If a connection-time import fails, check the saved thread and Issue state before starting a new action. Future reply events retain Slack queue retries. If the conversation changes after confirmation, disconnect and review it again. Reconnecting starts a new review; Redis skips posts already imported to that Issue. Posts imported before Redis state was introduced are not recognized.
 
 ### Slack app setup for thread connections
 
@@ -972,13 +1028,14 @@ Slack references: [message shortcuts](https://docs.slack.dev/interactivity/imple
 
 ### Redmine setup for thread connections
 
-Deploy the code and configuration and restart Redmine and Sidekiq. No dedicated table, additional database, or migration is required. Signed bot posts in Slack hold the connection state; Slack modals hold review information. Redmine stores only standard comments and attachments. Confirmation deduplication uses the existing `Rails.cache`, which must be shared across Web processes and handle `unless_exist` atomically.
+Configure the same Sidekiq Redis connection for the web and worker processes. Sidekiq is declared in the plugin Gemfile. Redis ACLs must allow `GET`, `MGET`, `SET`, `DEL`, and `EVAL`. Keys are namespaced by the Redmine host name; changing it makes the previous state inaccessible. Connection and import IDs have no TTL: enable Redis persistence and backups and prevent eviction. Redis failures stop processing rather than guessing. No additional Redmine table or migration is required. Old Slack-stored connections are not migrated; reconnect existing threads.
 
 Example `config/slackmine.yml`:
 
 ```yaml
 slack:
   thread_connections: true   # Default is true; false stops this feature
+  thread_connection_feedback_cleanup_seconds: -1  # -1 keeps it; 0 suppresses it
   bot_token: 'xoxb-REPLACE-ME'
   events:
     app_id: 'A0123456789'
@@ -993,7 +1050,7 @@ users:
 
 Choose a destination project using the same Slack app/team and Bot Token as the global configuration. Configure explicit `users` mappings or `auto_map_users_by_email`; name-only matching does not authorize edits. The connecting user must be able to view and comment on the Issue, and attach files when importing attachments. Future replies check the same permissions for each speaker. Private Issues cannot be connected.
 
-The shortcut opens a loading form directly, then queues connection lookup. Selecting an Issue reviews history in the Web process and returns the completed preview in the acknowledgement when it finishes within two seconds. Slower reviews display a loading view and fall back to Sidekiq after a one-second delay so the acknowledgement cannot overwrite the completed preview. Confirmation acknowledges promptly and queues the connection, disconnection, and selected history import. Identical confirmations are suppressed with the existing Rails cache; atomic shared-cache support is needed across Web processes. Pending, uncertain, and completed requests remain claimed for 24 hours. Check the saved thread and Issue state before repeating an action.
+The shortcut opens a loading form, then checks the connection. A preview completing within two seconds is returned directly; slower previews use a delayed job. Confirmation and per-message import claims use Redis, including pending states. Inspect the saved Issue and thread before repeating an operation with an uncertain outcome.
 
 For timing checks, compare `connection preview direct duration_ms` or `connection preview deferred` in the Web log with completion times for `SlackmineThreadConnectionJob` in Sidekiq. Quote and attachment saving always runs in the job. Verify the thread and Issue before retrying an uncertain save.
 
@@ -1001,7 +1058,7 @@ For timing checks, compare `connection preview direct duration_ms` or `connectio
 
 Past conversation uses the same cards as normal conversation pickup. Consecutive posts by the same speaker are joined with a single newline, with one speaker/timestamp header (using the first post's time) and one **Open in Slack** link. A speaker change starts a new card: A→A→B→A produces three cards in conversation order. Original post URLs remain in the saved data, and attachments appear in the corresponding card. This applies to both web and email, including previously saved connection-history imports.
 
-- Past history includes eligible human posts, including the parent. A new connection supports up to 999 total thread posts, reserving one slot for its connection marker. Incomplete history and over-limit threads are rejected.
+- Past history includes eligible human posts, including the parent. The thread scan supports up to 1,000 posts; incomplete or over-limit histories are rejected.
 - Each post is limited to 10,000 characters and the combined past text to 100,000 characters. At most 10 attachments can be imported, subject to file size and type limits. Limits are checked before connecting; exceeding them reports an error.
 - Bot posts and posts addressed to bots are excluded. Historical speakers need not have Redmine mappings to be included as quotations.
 - Replies added between review and confirmation are imported without duplicate saving when reply events overlap. If the thread exceeds 1,000 posts during catch-up, disconnect and review again.
@@ -1009,8 +1066,8 @@ Past conversation uses the same cards as normal conversation pickup. Consecutive
 - Existing attachment restrictions apply. Selected history is limited to 10 files and 50 MiB combined. Images appear in the quote; other files have download links. Restricted file transfer prevents downloads.
 - Existing Slack link cards render the quotations. When cards are disabled, speaker, timestamp, links, and text remain readable as plain text.
 - If selected text, speaker, or file IDs change after review, saving stops and requires a new review. Later Slack edits/deletions are not synchronized. Disconnecting does not delete saved comments or attachments.
-- Connection and disconnection bot posts are the connection state. Deletion or Slack retention expiry can make state unrecoverable; retain these posts. Reconnect existing threads after changing the Signing Secret.
-- Reply events are queued and connections are checked against Slack thread history, without a database mapping. This also adds history requests for normal notification threads.
+- Connection and disconnection feedback does not hold connection state. `slack.thread_connection_feedback_cleanup_seconds` defaults to -1, which retains it, 0 suppresses it, and positive values schedule deletion. Inline adapters that cannot schedule retain the feedback.
+- Reply events are queued and the connection is checked in Redis. Old Slack marker posts are not used for state.
 - Each thread connects to one Issue. Disabling the feature globally or for the project stops imports. Re-enabling does not automatically import all history from the disabled period.
 
 ### Verify thread connections in a live installation
@@ -1027,8 +1084,9 @@ Use a test Issue and channel to check:
 Connection tests stub Slack APIs and Redmine model operations without an additional database:
 
 ```sh
-ruby -Itest test/thread_connections_test.rb
-ruby -Itest test/thread_connections_notes_test.rb
+SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_state_test.rb
+SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_connections_test.rb
+SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_connections_notes_test.rb
 ```
 
 Stub tests do not verify live Slack/Redmine rendering or production delivery.
@@ -1082,7 +1140,7 @@ All command text is configurable under `messages.commands` in the English exampl
 
 ![Daily due-date DMs](docs/images/features/due-reminders.webp)
 
-Run the task once a day in the Redmine application's time zone. It queues jobs on the `slack` queue; the worker sends the DMs:
+Run the task once a day in the Redmine application's time zone. It queues jobs on the `slackmine` queue; the worker sends the DMs:
 
 ```bash
 cd /path/to/slackmine
@@ -1167,7 +1225,7 @@ This option checks notification configuration and channel membership, **not Slac
 
 ![Slackmine administration: current settings and Sidekiq tasks](docs/images/features/administration.webp)
 
-Queue monitoring, execution history and test notifications are available **only when the ActiveJob adapter is Sidekiq**. Other adapters keep their existing notification behavior; queue/history information is unavailable and the test button is disabled. The **Queue and tasks** tab inspects pending, running, scheduled, retry and dead jobs. The latest 100 Slackmine execution attempts are recorded for up to seven days after installation; historical completed jobs cannot be reconstructed. History uses the existing Sidekiq Redis/Valkey instance at `slackmine:admin:job_history:v1`; no Redmine database tables are added. Only job names, IDs, outcomes, timestamps, durations and exception classes are stored, without job arguments, message bodies or credentials. Selecting a project changes the test destination; task monitoring remains global across Slackmine jobs. Job completion does not guarantee delivery for regular notifications. The administrator-only test button enqueues one message to the displayed destination, revalidates that destination before posting, and uses the same Slack queue. It requires Sidekiq and valid Bot/channel settings. Each job set is scanned up to 500 entries and truncated results are marked.
+Queue monitoring, execution history and test notifications are available **only when the ActiveJob adapter is Sidekiq**. Other adapters keep their existing notification behavior; queue/history information is unavailable and the test button is disabled. The **Queue and tasks** tab inspects pending, running, scheduled, retry and dead jobs. The latest 100 Slackmine execution attempts are recorded for up to seven days after installation; historical completed jobs cannot be reconstructed. History uses the existing Sidekiq Redis/Valkey instance at `slackmine:admin:job_history:v1`; no Redmine database tables are added. Only job names, IDs, outcomes, timestamps, durations and exception classes are stored, without job arguments, message bodies or credentials. Selecting a project changes the test destination; task monitoring remains global across Slackmine jobs. Job completion does not guarantee delivery for regular notifications. The administrator-only test button enqueues one message to the displayed destination, revalidates that destination before posting, and uses the same slackmine queue. It requires Sidekiq and valid Bot/channel settings. Each job set is scanned up to 500 entries and truncated results are marked.
 
 Administrator labels and descriptions are kept in `config/locales/slackmine_admin.ja.yml` and `config/locales/slackmine_admin.en.yml`, following the Redmine UI language. They are separate from Slack notification wording in `slackmine.messages.yml`.
 
@@ -1177,24 +1235,26 @@ Settings and mappings are read-only; test notifications are sent through an expl
 
 ## Delivery and operations
 
-`SlackmineNotificationJob` is enqueued after the Redmine event on the `slack` ActiveJob queue. For Sidekiq, include that queue in its configuration, for example:
+`SlackmineNotificationJob` is enqueued after the Redmine event on the `slackmine` ActiveJob queue. For a separate Sidekiq worker, include that queue in the Redmine application's `config/sidekiq.yml`, for example:
 
 ```yaml
 :queues:
   - default
   - mailers
-  - slack
+  - slackmine
 ```
+
+Queues without weights are processed in order. A busy earlier queue can delay `slackmine`; configure [weights or a dedicated worker](https://github.com/sidekiq/sidekiq/wiki/Advanced-Options) if needed.
 
 Slack API failures are logged and retried by Sidekiq. They do not roll back the Redmine operation. A failure to remove temporary image previews after a successful post is logged but does not retry the job, avoiding a duplicate message. Check the `SlackmineNotificationJob` and `Slackmine` log lines when a notification is absent.
 
-For development, ActiveJob's inline adapter can run without Sidekiq:
+For development, ActiveJob's inline adapter runs without a Sidekiq worker. Thread integration still needs the Sidekiq gem and its Redis connection:
 
 ```ruby
 config.active_job.queue_adapter = :inline
 ```
 
-Inline delivery happens during the Redmine request and may increase response time if Slack is slow. Use a worker that processes the `slack` queue in production.
+Inline delivery happens during the Redmine request and may increase response time if Slack is slow. Inline does not support delayed jobs, so scheduled notification cleanup and deferred previews are unavailable. Use a worker that processes the `slackmine` queue in production.
 
 If a notification is missing, check in this order:
 
@@ -1202,7 +1262,7 @@ If a notification is missing, check in this order:
 2. The running Redmine and Sidekiq processes have the intended token. `SLACK_BOT_TOKEN` overrides YAML.
 3. The project identifier maps to the intended channel, or a default channel is configured, and the bot is a member.
 4. The Bot Token has [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/), plus [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) or [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) for those optional features. Reinstall after adding a scope.
-5. Sidekiq processes the `slack` queue; inspect the job error and Slack API error code in the log.
+5. Sidekiq processes the `slackmine` queue; inspect the job error and Slack API error code in the log.
 
 A YAML change requires restarting both Redmine and Sidekiq. A successful job post confirms API delivery; check the target channel to confirm the visible layout and images. Existing messages are not updated retroactively.
 
@@ -1297,13 +1357,13 @@ ruby -Itest test/slash_commands_cache_test.rb
 ruby -Itest test/slash_commands_edit_test.rb
 ruby -Itest test/app_home_test.rb
 ruby -Itest test/message_shortcuts_test.rb
-ruby -Itest test/thread_connections_test.rb
-ruby -Itest test/thread_connections_notes_test.rb
+SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_connections_test.rb
+SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_connections_notes_test.rb
 ruby -Itest test/thread_images_test.rb
 ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 ```
 
-These tests exercise notification formatting and delivery logic with stubs. Additionally, run `ruby -Itest test/thread_connections_test.rb` for signed Slack connection state, previews, and reply routing. Run `ruby -Itest test/thread_comments_persistence_test.rb` where ActiveRecord and sqlite3 are available to check persistence, duplicate suppression, permission denial, and notification-loop suppression using in-memory Issue/Journal fixture tables. Run `ruby -Itest test/notification_transactions_test.rb` separately with ActiveRecord and sqlite3 to verify commit/rollback behavior for Issue deletion and generic notification models. See [notification audit](#notification-coverage-and-verification) for the coverage matrix and remaining runtime checks. These tests do not connect to production databases or Redis, post to Slack, or verify a live Redmine installation.
+These tests exercise notification formatting and delivery logic with stubs. Additionally, run `SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_connections_test.rb` for Redis connection state, previews, and reply routing. Start a dedicated test Redis first; affected tests skip without `SLACKMINE_TEST_REDIS_URL`. Run `SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_comments_persistence_test.rb` where ActiveRecord and sqlite3 are available to check persistence, duplicate suppression, permission denial, and notification-loop suppression using in-memory Issue/Journal fixture tables. Run `ruby -Itest test/notification_transactions_test.rb` separately with ActiveRecord and sqlite3 to verify commit/rollback behavior for Issue deletion and generic notification models. See [notification audit](#notification-coverage-and-verification) for the coverage matrix and remaining runtime checks. These tests connect only to the explicitly configured test Redis and do not connect to production databases, post to Slack, or verify a live Redmine installation.
 
 The administration overview's ERB rendering and HTML escaping can also be checked with `ruby -Itest test/admin_view_test.rb` where ActionView is available. These tests do not verify a running Redmine 7 administration page.
 
@@ -1354,6 +1414,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.0** | Move thread connections and message deduplication to Sidekiq Redis; existing threads must be reconnected. Rename the job queue to `slackmine`, add connection feedback cleanup configuration, and improve administration filters. |
 | **1.8.0** | Optionally display Slack profile pictures as Redmine avatars, with existing avatars as a fallback. |
 | **1.7.7** | Search for an Issue by title, number, or URL when connecting a Slack thread, and select past messages to import from the review screen. |
 | **1.7.6** | Add optional compact URL previews with titles, descriptions, and images to public issue comment notifications. Enable them through YAML. |

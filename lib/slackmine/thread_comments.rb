@@ -4,6 +4,8 @@ module Slackmine
   module ThreadComments
     module_function
 
+    class InvalidPermalink < StandardError; end
+
     def enabled?(project)
       Slackmine.effective_config(project).dig('slack', 'thread_comments') == true
     end
@@ -106,8 +108,7 @@ module Slackmine
       if ThreadConnections.receives?(app_id, team_id)
         return :ignored if addressed_to_bot?(event, nil)
         source = { 'channel' => event['channel'], 'ts' => event['thread_ts'] }
-        messages = ThreadConnections.history(source)
-        connection = ThreadConnections.connection(app_id, team_id, source, messages)
+        connection = ThreadState.connection(app_id, team_id, source)
         return ThreadConnections.process_reply(connection, app_id, team_id, event) if connection
       end
       tried_tokens = []
@@ -156,44 +157,16 @@ module Slackmine
     end
 
     def feedback(issue, event, result)
-      return if feedback_cleanup_seconds(issue.project).zero?
-
       key = result == :saved ? 'saved' : (result == :image_failed ? 'image_failed' : 'restricted')
       text = Formatter.interpolate(Formatter.message('thread_comments', key), { id: issue.id, product_name: Formatter.message('work_objects', 'product_name') },
                                    fallback: Formatter::DEFAULT_MESSAGES.dig('thread_comments', key))
       text = Formatter.link_issue_reference(text, issue.id)
-      response = Slackmine.slack_api('chat.postMessage', {
-        'channel' => event['channel'], 'thread_ts' => event['thread_ts'], 'text' => text,
-        'unfurl_links' => false, 'unfurl_media' => false
-      }, Slackmine.bot_token(issue.project))
-      schedule_feedback_cleanup(issue.project, event, response)
+      ThreadFeedback.post(issue.project, event['channel'], event['thread_ts'], text, 'comment', source_ts: event['ts'])
     rescue StandardError => e
       # Saving already succeeded. Feedback failure must not replay a note.
       Rails.logger&.error("Slackmine: thread comment feedback failed: #{e.class}")
     ensure
       Rails.logger&.info("Slackmine: thread comment issue=#{issue.id} result=#{result}")
-    end
-
-    def feedback_cleanup_seconds(project)
-      value = Slackmine.effective_config(project).dig('slack', 'thread_comment_feedback_cleanup_seconds')
-      return -1 if value == -1
-      value.is_a?(Numeric) && value.finite? && value >= 0 ? value : -1
-    end
-
-    def schedule_feedback_cleanup(project, event, response)
-      wait = feedback_cleanup_seconds(project)
-      return if wait == -1
-      timestamp = response['ts']
-      return unless posted_at(timestamp) && timestamp != event['ts'] && timestamp != event['thread_ts']
-
-      # Queue only the Bot's result message, never the original reply or token.
-      SlackmineThreadCommentFeedbackCleanupJob.set(wait: wait).perform_later(project.id, event['channel'], timestamp)
-    rescue StandardError => e
-      Rails.logger&.error("Slackmine: thread comment feedback cleanup scheduling failed: #{e.class}")
-    end
-
-    def source_marker(team_id, event)
-      "[Slack reply: #{team_id}/#{event['channel']}/#{event['ts']}]"
     end
 
     def posted_at(timestamp)
@@ -211,40 +184,36 @@ module Slackmine
       previous_images = Thread.current[:slackmine_thread_images]
       previous_messages = Thread.current[:slackmine_thread_messages]
       original_project = issue.project.identifier
+      token = nil
+      persistence_started = false
       Thread.current[:slackmine_thread_comment] = true
       uploads = []
       event = event.merge('text' => events.map { |item| item['text'].to_s }.join("\n\n"),
                           'files' => events.flat_map { |item| Array(item['files']) }.uniq)
       timestamp = history_cards ? (import_timestamp || Time.now.utc) : posted_at(event['ts'])
       return :restricted unless timestamp
+      if issue.class.respond_to?(:connection) && issue.class.connection.transaction_open?
+        raise 'Thread import cannot run inside an outer database transaction'
+      end
 
-      issue.with_lock do
+      result = issue.with_lock do
         next :restricted unless issue.project.identifier == original_project &&
           (connected ? ThreadConnections.enabled?(issue.project) : enabled?(issue.project))
-        # Keep recognizing the initial version's visible markers on retries.
-        marker = source_marker(team_id, event)
-        legacy_duplicate = issue.journals.where('notes LIKE ?', "%#{marker}%").any? do |journal|
-          journal.notes.to_s.end_with?("\n\n#{marker}")
-        end
-        next :duplicate if legacy_duplicate && !history_cards
         viewer = import_viewer || WorkObjects.viewer_for(event['user'])
         allowed = viewer && issue.project.active? && !issue.is_private? && issue.visible?(viewer) &&
                   issue.notes_addable?(viewer) && event['text'].to_s.length <= (history_cards ? ThreadConnections::MAX_HISTORY_TEXT : 10_000)
         next :restricted unless allowed
-        # The existing comment author and original posting time identify a
-        # retry, even after the comment text has been edited in Redmine.
-        if history_cards
-          nonce = history_cards.first['card']['thread_connection_nonce']
-          duplicate = issue.journals.where(user_id: viewer.id, created_on: timestamp).any? do |entry|
-            LinkQuotes.blocks(entry.notes).any? { |_, card| nonce && card['thread_connection_nonce'] == nonce }
-          end
-          next :duplicate if duplicate
-        else
-          next :duplicate if issue.journals.exists?(user_id: viewer.id, created_on: timestamp)
-        end
         restrict_transfer = Slackmine.files_transfer_restricted?(issue.project)
         next :restricted if !restrict_transfer && Array(event['files']).any? && !issue.attachments_addable?(viewer)
 
+        ThreadState.recover(issue, team_id, events)
+        token, indices = ThreadState.claim(issue.id, team_id, events)
+        next :duplicate if indices.empty?
+        events = indices.map { |index| events[index] }
+        history_cards = indices.map { |index| history_cards[index] } if history_cards
+        timestamp = posted_at(events.first['ts']) unless history_cards
+        event = events.first.merge('text' => events.map { |item| item['text'].to_s }.join("\n\n"),
+                                   'files' => events.flat_map { |item| Array(item['files']) }.uniq)
         urls = events.map do |item|
           response = Slackmine.slack_api('chat.getPermalink',
             { 'channel' => item['channel'], 'message_ts' => item['ts'] },
@@ -252,7 +221,7 @@ module Slackmine
           url = response['permalink'].to_s
           target = LinkCards.parse(url)
           unless target && target['channel'] == item['channel'] && posted_at(target['ts']) == posted_at(item['ts'])
-            return :restricted
+            raise InvalidPermalink
           end
           # Keep the thread timestamp so quote retrieval uses replies API.
           uri = URI.parse(url)
@@ -316,15 +285,29 @@ module Slackmine
         # Batch history already supplied each message. Quote those snapshots
         # instead of fetching every reply again within the import time budget.
         Thread.current[:slackmine_thread_messages] = events.zip(urls).map { |item, url| { url: url, message: item } } if events.size > 1
+        persistence_started = true
         issue.save!
         raise 'Slack reply Journal was not persisted' unless journal.persisted?
+        token = ThreadState.record_journal(issue.id, team_id, events, token, journal.id)
         :saved
       end
+      # Keep the claim pending until the transaction has committed. An
+      # uncertain outcome remains pending rather than creating a duplicate.
+      ThreadState.finish(issue.id, team_id, events, token) if result == :saved
+      result
     rescue ThreadFiles::ImportError => error
+      ThreadState.release(issue.id, team_id, events, token)
       Rails.logger&.warn("Slackmine: thread file rejected: #{error.message}")
       :image_failed
     rescue ActiveRecord::RecordInvalid
+      ThreadState.release(issue.id, team_id, events, token)
       :restricted
+    rescue InvalidPermalink
+      ThreadState.release(issue.id, team_id, events, token)
+      :restricted
+    rescue StandardError
+      ThreadState.release(issue.id, team_id, events, token) unless persistence_started
+      raise
     ensure
       uploads.each(&:close!) if uploads
       User.current = previous_user

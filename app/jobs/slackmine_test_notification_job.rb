@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineTestNotificationJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(project_id, expected_channel, text)
     project = Project.find(project_id) if project_id

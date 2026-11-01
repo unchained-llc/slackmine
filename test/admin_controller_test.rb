@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'active_support/core_ext/object/blank'
 require_relative 'admin_overview_test'
 
 # Redmine supplies ApplicationController and its require_admin implementation.
@@ -66,6 +67,19 @@ class AdminControllerTest < Minitest::Test
 
   def teardown
     Thread.current[:slackmine_project] = @previous_context
+  end
+
+  def test_settings_default_to_changed_and_can_show_defaults
+    Project.stub(:order, Scope.new([])) do
+      @controller.params = { tab: 'settings' }
+      @controller.index
+      assert @controller.instance_variable_get(:@changes_only)
+      refute @controller.instance_variable_get(:@show_defaults)
+      @controller.params = { tab: 'settings', show_defaults: '1' }
+      @controller.index
+      refute @controller.instance_variable_get(:@changes_only)
+      assert @controller.instance_variable_get(:@show_defaults)
+    end
   end
 
   def test_project_status_defaults_to_active_and_filters_before_pagination

@@ -30,7 +30,7 @@ class ThreadCommentFeedbackCleanupTest < Minitest::Test
   def test_enabled_cleanup_schedules_only_the_bots_feedback_for_all_results
     %i[saved restricted image_failed].each { |result| feedback(result) }
     assert_equal [60, 60, 60], @waits
-    assert_equal [[42, 'C123', '1002.000003']] * 3, @jobs
+    assert_equal [[42, 'C123', '1002.000003', 'comment']] * 3, @jobs
     assert_equal ['chat.postMessage'] * 3, @calls.map(&:first)
     @calls.each do |_, body, token|
       assert_equal @event['thread_ts'], body['thread_ts']
@@ -75,10 +75,55 @@ class ThreadCommentFeedbackCleanupTest < Minitest::Test
     assert_equal 2, @calls.size
   end
 
+  def test_connection_feedback_uses_its_own_cleanup_setting
+    @settings['slack']['thread_connection_feedback_cleanup_seconds'] = 5
+    Slackmine.stub(:config, @settings) do
+      Slackmine.stub(:slack_api, ->(*args) { @calls << args; @response }) do
+        JOB.stub(:set, ->(wait:) { @waits << wait; JOB }) do
+          JOB.stub(:perform_later, ->(*args) { @jobs << args }) do
+            Slackmine::ThreadFeedback.post(@project, 'C123', @event['thread_ts'], 'connected', 'connection')
+            @settings['slack']['thread_connection_feedback_cleanup_seconds'] = 0
+            Slackmine::ThreadFeedback.post(@project, 'C123', @event['thread_ts'], 'connected', 'connection')
+          end
+        end
+      end
+    end
+    assert_equal [5], @waits
+    assert_equal [[42, 'C123', '1002.000003', 'connection']], @jobs
+    assert_equal 1, @calls.size
+  end
+
+  def test_connection_feedback_defaults_to_kept
+    Slackmine.stub(:config, @settings) { assert_equal(-1, Slackmine::ThreadFeedback.cleanup_seconds(@project, 'connection')) }
+  end
+
+  def test_connection_cleanup_respects_its_current_project_setting
+    @settings['projects'] = { 'example' => { 'slack' => { 'thread_connection_feedback_cleanup_seconds' => -1 } } }
+    Slackmine.stub(:config, @settings) do
+      Project.stub(:find_by, @project) do
+        Slackmine.stub(:slack_api, ->(*args) { @calls << args }) do
+          JOB.new.perform(42, 'C123', '1002.000003', 'connection')
+          assert_empty @calls
+          @settings['projects']['example']['slack']['thread_connection_feedback_cleanup_seconds'] = 5
+          JOB.new.perform(42, 'C123', '1002.000003', 'connection')
+        end
+      end
+    end
+    assert_equal ['chat.delete'], @calls.map(&:first)
+  end
+
+  def test_inline_adapter_leaves_feedback_if_delayed_jobs_are_unavailable
+    Slackmine.stub(:config, @settings) do
+      Slackmine.stub(:slack_api, @response) do
+        JOB.stub(:set, ->(*) { raise NotImplementedError }) { COMMENTS.feedback(@issue, @event, :saved) }
+      end
+    end
+  end
+
   def test_invalid_settings_disable_cleanup
     [nil, '60', false, {}, -2, Float::NAN, Float::INFINITY].each do |value|
       @settings['slack']['thread_comment_feedback_cleanup_seconds'] = value
-      Slackmine.stub(:config, @settings) { assert_equal(-1, COMMENTS.feedback_cleanup_seconds(@project)) }
+      Slackmine.stub(:config, @settings) { assert_equal(-1, Slackmine::ThreadFeedback.cleanup_seconds(@project, 'comment')) }
     end
   end
 

@@ -4,6 +4,7 @@
 require_relative 'thread_comments_url_test'
 
 class ThreadConnectionsNotesTest < Minitest::Test
+  prepend ThreadStateIsolation
   def setup
     fixture = ThreadCommentsUrlTest.new('fixture')
     fixture.setup
@@ -15,6 +16,7 @@ class ThreadConnectionsNotesTest < Minitest::Test
       filter.is_a?(Hash) ? rows.select { |j| j.user_id == filter[:user_id] && j.created_on == filter[:created_on] } : []
     end
     journal = @journal
+    @issue.journals.define_singleton_method(:find_by) { |id:| rows.any? && id == journal.id ? journal : nil }
     @issue.define_singleton_method(:save!) { journal[:persisted?] = true; rows << journal }
     @time = Slackmine::ThreadComments.posted_at('1791115675.999999')
     other = @event.merge('user' => 'U456', 'ts' => '1791115675.755580', 'text' => 'Second speaker')
@@ -72,6 +74,40 @@ class ThreadConnectionsNotesTest < Minitest::Test
     cards = Slackmine::LinkQuotes.blocks(@journal.notes).map(&:last)
     assert_equal 100, cards.size
     assert_equal @entries.map { |entry| entry['event']['text'] }, cards.map { |card| card['text'] }
+  end
+
+  def test_reconnection_imports_only_posts_not_already_saved
+    assert_equal :saved, persist
+    old = @entries.last
+    new_event = @event.merge('ts' => '1791115675.755581', 'text' => 'New reply')
+    @entries = [old, { 'event' => new_event, 'card' => old['card'].merge('text' => 'New reply',
+      'timestamp' => Slackmine::ThreadComments.posted_at(new_event['ts']).iso8601, 'thread_connection_nonce' => 'b' * 32) }]
+    @calls.clear
+    assert_equal :saved, persist
+    assert_equal ['chat.getPermalink'], @calls
+    assert_equal ['New reply'], Slackmine::LinkQuotes.blocks(@journal.notes).map { |_, card| card['text'] }
+  end
+
+  def test_quoted_history_recovers_when_redis_finalization_fails
+    Slackmine::ThreadState.stub(:finish, ->(*) { raise IOError, 'Redis unavailable after commit' }) do
+      assert_raises(IOError) { persist }
+    end
+    assert_equal 1, @stored.size
+    assert_equal :duplicate, persist
+    assert_equal 1, @stored.size
+  end
+
+  def test_history_and_normal_replies_share_the_same_message_deduplication
+    settings = { 'slack' => { 'thread_comments' => true, 'thread_connections' => true, 'bot_token' => 'token' } }
+    Slackmine.stub(:config, settings) do
+      Slackmine::WorkObjects.stub(:viewer_for, @viewer) do
+        Slackmine.stub(:slack_api, ->(_method, body, *) { { 'permalink' => "https://example.slack.com/archives/C123/p#{body['message_ts'].delete('.')}" } }) do
+          assert_equal :saved, Slackmine::ThreadComments.persist_reply(@issue, @event, 'TTEST')
+        end
+      end
+    end
+    assert_equal :saved, persist
+    assert_equal ['Second speaker'], Slackmine::LinkQuotes.blocks(@journal.notes).map { |_, card| card['text'] }
   end
 
   def test_configured_history_heading_preserves_speakers_and_deduplication

@@ -1,15 +1,17 @@
 # frozen_string_literal: true
 require_relative 'link_cards_test'
+require_relative 'thread_state_isolation'
 
 class ThreadCommentsUrlTest < Minitest::Test
+  prepend ThreadStateIsolation
   COMMENTS = Slackmine::ThreadComments
   URL = 'https://example.slack.com/archives/C123/p1791115675755579'
 
   def setup
     @event = { 'user' => 'U123', 'channel' => 'C123', 'ts' => '1791115675.755579', 'thread_ts' => '1791110000.000001', 'text' => 'Reply body' }
     @viewer = OpenStruct.new(id: 3)
-    @journal = OpenStruct.new(persisted?: false)
-    @issue = OpenStruct.new(project: OpenStruct.new(identifier: 'example', active?: true),
+    @journal = OpenStruct.new(id: 88, persisted?: false)
+    @issue = OpenStruct.new(id: 7, project: OpenStruct.new(identifier: 'example', active?: true),
                             is_private?: false)
     @issue.define_singleton_method(:with_lock) { |&block| block.call }
     @issue.define_singleton_method(:visible?) { |_| true }
@@ -57,9 +59,10 @@ class ThreadCommentsUrlTest < Minitest::Test
   end
 
   def test_duplicate_does_not_fetch_permalink_or_save
-    @issue.journals.define_singleton_method(:exists?) { |*| true }
+    assert_equal :saved, persist
+    @calls.clear
     assert_equal :duplicate, persist
     assert_empty @calls
-    refute @journal.persisted?
+    assert @journal.persisted?
   end
 end

@@ -54,7 +54,7 @@ module Slackmine
     def snapshot
       return { available: false } unless available?
       load_api
-      queue = Sidekiq::Queue.new('slack')
+      queue = Sidekiq::Queue.new('slackmine')
       entries = []
       sources = { 'queued' => queue, 'scheduled' => Sidekiq::ScheduledSet.new,
                   'retry' => Sidekiq::RetrySet.new, 'dead' => Sidekiq::DeadSet.new }

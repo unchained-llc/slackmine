@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineDueReminderJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(issue_id, scheduled_on, target_user_id = nil)
     issue = Issue.find_by(id: issue_id)

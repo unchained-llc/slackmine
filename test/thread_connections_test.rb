@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 require_relative 'message_shortcuts_test'
 require_relative '../app/jobs/slackmine_thread_connection_job'
+require_relative '../app/jobs/slackmine_thread_comment_feedback_cleanup_job'
+require_relative 'thread_state_isolation'
 
 class Issue
   def self.visible(*)
@@ -12,13 +14,14 @@ class Issue
 end
 
 class ThreadConnectionsTest < Minitest::Test
+  prepend ThreadStateIsolation
   CONNECTIONS = Slackmine::ThreadConnections
 
   def setup
     @integration = { 'app_id' => 'ATEST', 'team_id' => 'TTEST', 'signing_secret' => 'test-secret' }
     @settings = { 'slack' => { 'bot_token' => 'token', 'events' => @integration } }
     @viewer = OpenStruct.new(id: 3)
-    @issue = OpenStruct.new(id: 7, subject: 'Example issue', project: OpenStruct.new(active?: true, identifier: 'example'))
+    @issue = OpenStruct.new(id: 7, subject: 'Example issue', project: OpenStruct.new(id: 42, active?: true, identifier: 'example'))
     @issue.define_singleton_method(:is_private?) { false }
     @issue.define_singleton_method(:visible?) { |*| true }
     @issue.define_singleton_method(:notes_addable?) { |*| true }
@@ -26,6 +29,7 @@ class ThreadConnectionsTest < Minitest::Test
     @cache = SlashCommandsCacheTest::Cache.new
     @saved = []
     @queued = []
+    @cleanup = []
     @member = @bot_member = true
     @payload = { 'type' => 'message_action', 'callback_id' => CONNECTIONS::CALLBACK,
       'user' => { 'id' => 'U123' }, 'channel' => { 'id' => 'C123' }, 'trigger_id' => 'fresh',
@@ -67,7 +71,12 @@ class ThreadConnectionsTest < Minitest::Test
               Slackmine.stub(:slack_api, @api) do
                 Slackmine::ThreadComments.stub(:persist_reply, ->(*args, **opts) { @saved << [args, opts]; :saved }) do
                   Slackmine::ThreadComments.stub(:feedback, ->(*) {}) do
-                    Rails.stub(:cache, @cache) { yield }
+                    cleanup = Object.new
+                    cleanup.define_singleton_method(:perform_later) { |*args| @cleanup_store << args; Object.new }
+                    cleanup.instance_variable_set(:@cleanup_store, @cleanup)
+                    SlackmineThreadCommentFeedbackCleanupJob.stub(:set, ->(wait:) { cleanup }) do
+                      Rails.stub(:cache, @cache) { yield }
+                    end
                   end
                 end
               end
@@ -109,6 +118,19 @@ class ThreadConnectionsTest < Minitest::Test
     end
   end
 
+  def test_redis_failure_does_not_guess_connection_or_import
+    context do
+      Slackmine::ThreadState.stub(:with_redis, ->(*) { raise IOError, 'Redis unavailable' }) do
+        CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
+        refute @calls.last.last['view'].key?('submit')
+        event = @messages.first.merge('type' => 'message', 'channel' => 'C123', 'thread_ts' => @source['ts'], 'ts' => '1791001000.000011')
+        assert_raises(IOError) { Slackmine::ThreadComments.process('ATEST', 'TTEST', event) }
+      end
+      assert_empty @saved
+      refute @calls.any? { |method, _| method == 'chat.postMessage' }
+    end
+  end
+
   def test_global_messages_customize_the_initial_dialog
     @settings['messages'] = { 'thread_connections' => {
       'title' => 'Connect a thread', 'close' => 'Cancel', 'loading_picker' => 'Checking connection' } }
@@ -135,7 +157,7 @@ class ThreadConnectionsTest < Minitest::Test
       assert_equal 'Alice: Parent message (0 files)', view.dig('blocks', 1, 'text', 'text')
       assert_equal 'Keep this post', view.dig('blocks', 2, 'elements', 0, 'options', 0, 'text', 'text')
       assert_equal 'actions', view.dig('blocks', 2, 'type')
-      CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: true)
+      CONNECTIONS.connection_feedback(@source, active: true)
       assert_includes @calls.last.last['text'], 'Connected successfully'
       CONNECTIONS.preview_error('V123', StandardError.new, project: @issue.project)
       assert_equal 'Cannot review', @calls.last.last.dig('view', 'blocks', 0, 'text', 'text')
@@ -228,6 +250,8 @@ class ThreadConnectionsTest < Minitest::Test
       drain_jobs
       assert_equal 100, @saved.first.last[:history_cards].size
 
+      assert Slackmine::ThreadState.disconnect('ATEST', 'TTEST', @source)
+
       @source['nonce'] = SecureRandom.hex(16)
       @messages = [{ 'ts' => '1791001000.000001', 'user' => 'U123', 'text' => 'x' * 100_001 }]
       CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
@@ -265,8 +289,8 @@ class ThreadConnectionsTest < Minitest::Test
 
   def test_full_thread_returns_capacity_error_before_connecting
     context do
-      messages = 1000.times.map { |index| { 'ts' => format('1791001%03d.000001', index), 'user' => 'U123', 'text' => 'Post' } }
-      CONNECTIONS.stub(:history, messages) { CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123') }
+      @messages = 1001.times.map { |index| { 'ts' => format('1791001%03d.000001', index), 'user' => 'U123', 'text' => 'Post' } }
+      CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
       view = @calls.last.last['view']
       refute view.key?('submit')
       assert_includes view.to_json, CONNECTIONS.message('bulk_thread_limit')
@@ -291,7 +315,7 @@ class ThreadConnectionsTest < Minitest::Test
       assert_equal ['U456'], opts[:events].map { |e| e['user'] }
       assert_equal ['Bob'], opts[:history_cards].map { |e| e['card']['author'] }
       assert_equal Slackmine::ThreadComments.posted_at(@source['cutoff']), opts[:import_timestamp]
-      assert CONNECTIONS.connection('ATEST', 'TTEST', @source, @messages)['active']
+      assert Slackmine::ThreadState.connection('ATEST', 'TTEST', @source)['active']
     end
   end
 
@@ -504,6 +528,7 @@ class ThreadConnectionsTest < Minitest::Test
   end
 
   def test_confirmation_redelivery_does_not_repeat_import_or_connection_marker
+    @settings['slack']['thread_connection_feedback_cleanup_seconds'] = 5
     context do
       view = preview
       assert_equal({}, confirmation(view))
@@ -513,6 +538,8 @@ class ThreadConnectionsTest < Minitest::Test
       assert_equal({}, confirmation(view))
       assert_equal 1, @saved.size
       assert_equal 1, @calls.count { |method, _| method == 'chat.postMessage' }
+      assert_equal 1, @cleanup.size
+      assert_equal 'connection', @cleanup.first.last
     end
   end
 
@@ -592,37 +619,6 @@ class ThreadConnectionsTest < Minitest::Test
     end
   end
 
-  def test_marker_rejects_human_copies_wrong_app_wrong_thread_and_modified_target
-    context do
-      CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: true)
-      marker = @messages.last
-      assert_equal 7, CONNECTIONS.connection('ATEST', 'TTEST', @source, [marker])['issue_id']
-      assert_nil CONNECTIONS.connection('ATEST', 'TTEST', @source, [marker.reject { |k, _| k == 'bot_id' }])
-      assert_nil CONNECTIONS.connection('ATEST', 'TTEST', @source.merge('channel' => 'COTHER'), [marker])
-      assert_nil CONNECTIONS.connection('ATEST', 'TTEST', @source, [marker.merge('app_id' => 'OTHER')])
-      forged = Marshal.load(Marshal.dump(marker))
-      block = forged['blocks'].first
-      block['block_id'] = block['block_id'].sub('slackmine_connection:', 'slackmine_connection:AAAA')
-      assert_nil CONNECTIONS.connection('ATEST', 'TTEST', @source, [forged])
-    end
-  end
-
-  def test_first_connection_wins_and_stale_disconnect_cannot_close_new_connection
-    context do
-      CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: true)
-      competing = @source.merge('nonce' => 'b' * 32)
-      CONNECTIONS.post_marker('ATEST', 'TTEST', competing, active: true)
-      assert_equal 'a' * 32, CONNECTIONS.connection('ATEST', 'TTEST', @source, @messages)['nonce']
-      CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: false)
-      refute CONNECTIONS.connection('ATEST', 'TTEST', @source, @messages)['active']
-      CONNECTIONS.post_marker('ATEST', 'TTEST', competing, active: true)
-      CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: false)
-      state = CONNECTIONS.connection('ATEST', 'TTEST', @source, @messages)
-      assert state['active']
-      assert_equal 'b' * 32, state['nonce']
-    end
-  end
-
   def test_changed_selected_history_is_rejected_before_connecting
     context do
       view = preview
@@ -630,7 +626,7 @@ class ThreadConnectionsTest < Minitest::Test
       assert_equal({}, confirmation(view))
       drain_jobs
       assert_empty @saved
-      assert_nil CONNECTIONS.connection('ATEST', 'TTEST', @source, @messages)
+      assert_nil Slackmine::ThreadState.connection('ATEST', 'TTEST', @source)
     end
   end
 
@@ -649,26 +645,26 @@ class ThreadConnectionsTest < Minitest::Test
   def test_delayed_connect_job_cannot_resurrect_a_closed_request
     context do
       source = @source.merge('posts' => [], 'ready' => true)
-      CONNECTIONS.post_marker('ATEST', 'TTEST', source, active: true)
-      CONNECTIONS.post_marker('ATEST', 'TTEST', source, active: false)
+      Slackmine::ThreadState.connect('ATEST', 'TTEST', source)
+      Slackmine::ThreadState.disconnect('ATEST', 'TTEST', source)
       other = source.merge('nonce' => 'b' * 32)
-      CONNECTIONS.post_marker('ATEST', 'TTEST', other, active: true)
-      CONNECTIONS.post_marker('ATEST', 'TTEST', other, active: false)
+      Slackmine::ThreadState.connect('ATEST', 'TTEST', other)
+      Slackmine::ThreadState.disconnect('ATEST', 'TTEST', other)
       @calls.clear
       CONNECTIONS.finish('ATEST', 'TTEST', source)
       refute @calls.any? { |method, _| method == 'chat.postMessage' }
       assert_empty @saved
-      refute CONNECTIONS.connection('ATEST', 'TTEST', source, @messages)['active']
+      refute Slackmine::ThreadState.connection('ATEST', 'TTEST', source)['active']
     end
   end
 
-  def test_reply_worker_uses_signed_slack_state_and_stops_after_closure
+  def test_reply_worker_uses_redis_state_and_stops_after_closure
     context do
-      CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: true)
+      Slackmine::ThreadState.connect('ATEST', 'TTEST', @source)
       event = @messages.first.merge('type' => 'message', 'channel' => 'C123', 'thread_ts' => @source['ts'], 'ts' => '1791001000.000011')
       assert Slackmine::ThreadComments.accepted_reply?('ATEST', 'TTEST', event)
       assert_equal :saved, Slackmine::ThreadComments.process('ATEST', 'TTEST', event)
-      CONNECTIONS.post_marker('ATEST', 'TTEST', @source, active: false)
+      Slackmine::ThreadState.disconnect('ATEST', 'TTEST', @source)
       assert_equal :ignored, Slackmine::ThreadComments.process('ATEST', 'TTEST', event)
       assert_equal 1, @saved.size
     end

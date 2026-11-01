@@ -5,9 +5,7 @@ require 'base64'
 require 'timeout'
 
 module Slackmine
-  # Slack is the durable connection store. A signed block_id on our Bot's
-  # connection/closure messages binds the state to this exact app/team/thread.
-  # No plugin table, DB migration, or preview cache is required.
+  # Connection state is shared with thread import deduplication in Redis.
   module ThreadConnections
     module_function
 
@@ -16,7 +14,6 @@ module Slackmine
     SELECT_CALLBACK = 'slackmine_thread_connect_select'
     SEARCH_CALLBACK = 'slackmine_thread_connect_search'
     SAVE_CALLBACK = 'slackmine_thread_connect_save'
-    MARKER_PREFIX = 'slackmine_connection:'
     MAX_HISTORY = 20
     MAX_SCAN = 1000
     MAX_HISTORY_TEXT = 100_000
@@ -203,36 +200,6 @@ module Slackmine
       raise 'Thread exceeds 1000 messages'
     end
 
-    def marker(app, team, source, message)
-      return unless message['bot_id'] && (message['app_id'] || message.dig('bot_profile', 'app_id')) == app
-      block = Array(message['blocks']).find { |b| b.is_a?(Hash) && b['block_id'].to_s.start_with?(MARKER_PREFIX) }
-      return unless block
-      encoded, digest = block['block_id'].delete_prefix(MARKER_PREFIX).split(':', 2)
-      return unless encoded && secure_equal?(signature(app, team, source['channel'], source['ts'], encoded), digest)
-      data = JSON.parse(Base64.strict_decode64(encoded))
-      return unless data.is_a?(Array) && data.size == 4 && data[0].is_a?(Integer) && data[0] > 0 &&
-                    ThreadComments.posted_at(data[1]) && data[2].to_s.match?(/\A[0-9a-f]{32}\z/) && [true, false].include?(data[3])
-      { 'issue_id' => data[0], 'cutoff' => data[1], 'nonce' => data[2], 'active' => data[3], 'marker_ts' => message['ts'] }
-    rescue JSON::ParserError, ArgumentError, TypeError
-      nil
-    end
-
-    def connection(app, team, source, messages)
-      current = nil
-      messages.each do |message|
-        item = marker(app, team, source, message)
-        next unless item
-        # First connection wins until a closure for that exact nonce. A late
-        # retry or stale closure cannot replace/disconnect a later connection.
-        if item['active']
-          current = item unless current && current['active']
-        elsif current && current['active'] && current['nonce'] == item['nonce']
-          current = item
-        end
-      end
-      current
-    end
-
     def human_message?(message)
       message.is_a?(Hash) && !message['bot_id'] && !message['app_id'] &&
         [nil, '', 'thread_broadcast', 'file_share'].include?(message['subtype']) &&
@@ -255,9 +222,7 @@ module Slackmine
       viewer = WorkObjects.viewer_for(source['slack_user'])
       raise 'Unknown user' unless viewer && viewer.id == source['user_id'] && enabled?
       verify_channel!(source['channel'], source['slack_user'], Slackmine.bot_token(nil))
-      existing_messages = history(source)
-      current = connection(app, team, source, existing_messages)
-      raise 'Thread exceeds connection capacity' if (!current || !current['active']) && existing_messages.size >= MAX_SCAN
+      current = ThreadState.connection(app, team, source)
       if current && current['active']
         issue = Issue.find_by(id: current['issue_id'])
         raise 'Permission denied' unless allowed?(issue, viewer, app, team)
@@ -266,6 +231,7 @@ module Slackmine
           input('issue', message('destination', project: issue&.project), { 'type' => 'plain_text_input', 'initial_value' => issue.id.to_s })],
           project: issue&.project, app: app, team: team, source: source, callback: SAVE_CALLBACK, submit: message('disconnect', project: issue&.project))
       else
+        history(source)
         blocks = [section(message('unified_picker_hint'))]
         blocks << input('search_issue', message('issue_search'), { 'type' => 'external_select', 'min_query_length' => 0,
           'placeholder' => { 'type' => 'plain_text', 'text' => message('search_placeholder') } })
@@ -509,15 +475,12 @@ module Slackmine
         selected_indices.each { |index| i = index.to_i; bits[i / 8] |= (1 << (i % 8)) }
         source = source.merge('selection_bits' => Base64.strict_encode64(bits.pack('C*')))
       end
-      # Claim the signed confirmation before Slack writes or history imports.
-      # Keep an uncertain outcome claimed, so a redelivery cannot repeat it.
-      key = submission_key(app, team, viewer.id, source)
-      cache = Rails.cache
-      return {} if cache.read(key) == 'done'
-      return save_error(source, message('submission_pending', project: issue&.project), issue&.project) unless cache.write(key, 'pending', unless_exist: true, expires_in: 86_400)
+      claim = ThreadState.claim_submission(app, team, source)
+      return {} if claim == 'done'
+      return save_error(source, message('submission_pending', project: issue&.project), issue&.project) unless claim == 'claimed'
       job = SlackmineThreadConnectionJob.perform_later(app, team, source.merge('posts' => selected), nil, 'save')
       unless job
-        cache.delete(key)
+        ThreadState.release_submission(app, team, source)
         return save_error(source, message('submission_failed', project: issue&.project), issue&.project)
       end
       {}
@@ -531,28 +494,18 @@ module Slackmine
       { 'response_action' => 'update', 'view' => modal([section(text)], project: project) }
     end
 
-    def submission_key(app, team, user_id, source)
-      "slackmine:thread_connection:#{Digest::SHA256.hexdigest([app, team, user_id, source['nonce'], source['disconnect'] == true].join(':'))}"
-    end
-
     def complete_submission(app, team, source)
-      key = submission_key(app, team, source['user_id'], source)
-      return if Rails.cache.read(key) == 'done'
       finish(app, team, source)
-      Rails.cache.write(key, 'done', expires_in: 86_400)
+      ThreadState.finish_submission(app, team, source)
     end
 
-    def post_marker(app, team, source, active:)
+    def connection_feedback(source, active:)
       issue = Issue.find_by(id: source['issue_id'])
-      raise 'Invalid integration' unless scope?(issue, app, team)
-      encoded = Base64.strict_encode64(JSON.generate([issue.id, source['cutoff'], source['nonce'], active]))
-      block_id = MARKER_PREFIX + encoded + ':' + signature(app, team, source['channel'], source['ts'], encoded)
-      raise 'Marker exceeds Slack limit' if block_id.length > 255
       text = "<#{Formatter.url("/issues/#{issue.id}")}|##{issue.id}> " +
              (active ? message('connected', project: issue&.project) : message('disconnected', project: issue&.project))
-      Slackmine.slack_api('chat.postMessage', { 'channel' => source['channel'], 'thread_ts' => source['ts'], 'text' => text,
-        'blocks' => [{ 'type' => 'section', 'block_id' => block_id, 'text' => { 'type' => 'mrkdwn', 'text' => text } }],
-        'unfurl_links' => false, 'unfurl_media' => false }, Slackmine.bot_token(nil))
+      ThreadFeedback.post(issue.project, source['channel'], source['ts'], text, 'connection')
+    rescue StandardError => e
+      Rails.logger&.warn("Slackmine: connection feedback failed: #{e.class}")
     end
 
     def finish(app, team, source)
@@ -561,19 +514,12 @@ module Slackmine
       raise 'Permission denied' unless viewer && viewer.id == source['user_id'] && allowed?(issue, viewer, app, team)
       channel_info = verify_channel!(source['channel'], source['slack_user'], Slackmine.bot_token(nil))
       messages = history(source)
-      current = connection(app, team, source, messages)
+      current = ThreadState.connection(app, team, source)
       if source['disconnect']
         return unless current && current['active'] && current['nonce'] == source['nonce']
-        post_marker(app, team, source, active: false)
+        connection_feedback(source, active: false) if ThreadState.disconnect(app, team, source)
         return
       end
-      # A cancelled/closed request is never resurrected by a delayed retry,
-      # including after a different connection has also been closed.
-      closed = messages.any? do |m|
-        item = marker(app, team, source, m)
-        item && !item['active'] && item['nonce'] == source['nonce']
-      end
-      return if closed
       if current && current['active'] && current['nonce'] != source['nonce']
         return failure_notice(source, message('already_connected', project: issue&.project))
       end
@@ -599,17 +545,13 @@ module Slackmine
         end
         raise 'Selected text exceeds 10000 characters' if history_text_length(selected) > 10_000
       end
-      unless current && current['active']
-        raise 'Thread exceeds connection capacity' if messages.size >= MAX_SCAN
-        posted = post_marker(app, team, source, active: true)
-        messages = history(source)
-        current = connection(app, team, source, messages)
-        unless current && current['active'] && current['nonce'] == source['nonce']
-          # Only remove the losing confirmation created by this request.
-          Slackmine.slack_api('chat.delete', { 'channel' => source['channel'], 'ts' => posted['ts'] }, Slackmine.bot_token(nil)) if ThreadComments.posted_at(posted['ts'])
-          return failure_notice(source, message('connection_conflict', project: issue&.project))
-        end
-      end
+      state = ThreadState.connect(app, team, source)
+      return if state == 'closed'
+      return failure_notice(source, message('connection_conflict', project: issue&.project)) if state == 'conflict'
+      current = ThreadState.connection(app, team, source)
+      # Re-read after publishing the connection: replies that arrived between
+      # the first read and the state write may have been handled before it.
+      messages = history(source)
       cache = {}
       call = lambda { |method, body| cache[[method, body]] ||= Slackmine.slack_api(method, body, Slackmine.bot_token(nil), form: true) }
       entries = selected.map do |m|
@@ -624,13 +566,14 @@ module Slackmine
             connected: true, import_viewer: viewer, history_cards: entries, import_timestamp: ThreadComments.posted_at(source['cutoff']))
           raise "History import failed: #{result}" unless [:saved, :duplicate].include?(result)
         end
-        # Events accepted while the modal was open can precede the connection
-        # marker. Replay those replies; existing Journal identity deduplicates them.
+        # Replay replies accepted before the connection was recorded; the
+        # shared Redis ledger suppresses overlap with live reply events.
         messages.each do |m|
           next unless human_message?(m) && ThreadComments.posted_at(m['ts']) > ThreadComments.posted_at(source['cutoff'])
           process_reply(current, app, team, snapshot(m).merge('channel' => source['channel'], 'thread_ts' => source['ts']))
         end
       end
+      connection_feedback(source, active: true) if state == 'connected'
     rescue StandardError => e
       Rails.logger&.error("Slackmine: connection operation failed: #{e.class}")
       failure_notice(source, message('operation_failed', project: issue&.project))

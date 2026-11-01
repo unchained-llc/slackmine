@@ -1,4 +1,7 @@
 <h2><%= l(:label_slackmine_admin) %></h2>
+<% content_for :header_tags do %>
+  <%= javascript_include_tag 'slackmine_admin_filters', plugin: 'slackmine', defer: true %>
+<% end %>
 <% if @missing_configuration && @missing_configuration.any? %>
   <div class="warning"><%= l(:text_slackmine_admin_missing_configuration) %> <%= @missing_configuration.join(', ') %></div>
 <% end %>
@@ -12,9 +15,9 @@
 </div>
 
 <% if @tab != 'projects' %>
-  <%= form_tag slackmine_admin_path, method: :get do %>
+  <%= form_tag slackmine_admin_path, method: :get, class: 'slackmine-admin-filter' do %>
     <%= hidden_field_tag :tab, @tab %>
-    <p>
+    <p style="<%= @tab == 'settings' ? 'display: flex; align-items: center; flex-wrap: wrap; gap: 8px' : '' %>">
       <%= label_tag :scope_project_id, l(:label_project) %>
       <%= select_tag :scope_project_id, options_for_select([[l(:label_slackmine_admin_global), '']] + @scope_projects, @scope_project&.id) %>
       <% if @tab == 'users' %>
@@ -22,10 +25,12 @@
         <%= select_tag :mapping_filter, options_for_select(%w[mapped unmapped all].map { |filter| [l("label_slackmine_admin_filter_#{filter}"), filter] }, @mapping_filter) %>
       <% end %>
       <% if @tab == 'settings' %>
-        <%= check_box_tag :changes_only, '1', @changes_only %>
-        <%= label_tag :changes_only, l(:label_slackmine_admin_changes_only) %>
+        <%= label_tag :show_defaults, style: 'display: inline-flex; align-items: center; gap: 6px; margin: 0' do %>
+          <%= check_box_tag :show_defaults, '1', @show_defaults, style: 'margin: 0' %>
+          <%= l(:label_slackmine_admin_show_defaults) %>
+        <% end %>
       <% end %>
-      <%= submit_tag l(:button_apply), name: nil %>
+      <noscript><%= submit_tag l(:button_apply), name: nil %></noscript>
     </p>
   <% end %>
 <% end %>
@@ -67,12 +72,12 @@
 <% elsif @tab == 'jobs' %>
   <%= render partial: 'slackmine_admin/jobs' %>
 <% elsif @tab == 'projects' %>
-  <%= form_tag slackmine_admin_path, method: :get do %>
+  <%= form_tag slackmine_admin_path, method: :get, class: 'slackmine-admin-filter' do %>
     <%= hidden_field_tag :tab, 'projects' %>
     <p>
       <%= label_tag :project_status, l(:field_status) %>
       <%= select_tag :project_status, options_for_select([[l(:project_status_active), '1'], [l(:project_status_closed), '5'], [l(:project_status_archived), '9'], [l(:project_status_scheduled_for_deletion), '10'], [l(:label_slackmine_admin_filter_all), 'all']], @project_status) %>
-      <%= submit_tag l(:button_apply), name: nil %>
+      <noscript><%= submit_tag l(:button_apply), name: nil %></noscript>
     </p>
   <% end %>
   <p><%= l(:text_slackmine_admin_projects) %></p>

@@ -48,7 +48,7 @@ class AdminViewTest < Minitest::Test
   def render_tab(tab, assigns = {})
     labels = YAML.safe_load(File.read(File.expand_path('../config/locales/slackmine_admin.en.yml', __dir__))).fetch('en')
     lookup = ActionView::LookupContext.new([File.expand_path('../app/views', __dir__)])
-    view = View.new(lookup, {
+    view = View.with_empty_template_cache.new(lookup, {
       tab: tab, scope_project: nil, scope_projects: [['<script>project</script>', 1]],
       pages: nil, labels: labels, match_methods: {}
     }.merge(assigns), nil)
@@ -191,5 +191,11 @@ class AdminViewTest < Minitest::Test
     filtered = render_tab('settings', settings: {'slack' => {'work_object_actions' => true, 'thread_comments' => false}}, changes_only: true)
     refute_includes filtered, '<code>slack.thread_comments</code>'
     assert_includes filtered, '<code>slack.work_object_actions</code>'
+    input = Nokogiri::HTML(filtered).at_css('input[name=show_defaults]')
+    refute input['checked']
+    assert_includes filtered, 'Also show settings matching defaults'
+    shown = render_tab('settings', settings: {'slack' => {'work_object_actions' => true, 'thread_comments' => false}}, changes_only: false, show_defaults: true)
+    assert_equal 'checked', Nokogiri::HTML(shown).at_css('input[name=show_defaults]')['checked']
+    assert_includes shown, '<code>slack.thread_comments</code>'
   end
 end

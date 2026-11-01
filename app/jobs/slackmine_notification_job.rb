@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineNotificationJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(payload, project_id, image_names = [], image_source_id = nil, issue_id = nil)
     project = Project.find_by(id: project_id)

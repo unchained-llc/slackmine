@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineAppHomeJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(app_id, team_id, user_id, filter = 'all')
     Slackmine::AppHome.publish(app_id, team_id, user_id, filter)

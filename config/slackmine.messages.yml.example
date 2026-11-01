@@ -312,7 +312,7 @@ Past posts will not be imported. Future replies will be saved."
     bulk_history_text_limit: The past conversation exceeds 100,000 characters and cannot be imported. No connection was created.
     bulk_history_files_limit: The past conversation has more than 10 attachments and cannot be imported. No connection was created.
     bulk_history_post_limit: A past post exceeds 10,000 characters and cannot be imported. No connection was created.
-    bulk_thread_limit: This thread has reached the 999-post connection limit and cannot be connected.
+    bulk_thread_limit: This thread exceeds the 1,000-post limit and cannot be connected.
     unified_picker_hint: Choose a recent Issue or search by number, URL, or title. Review the destination and import choice before connecting.
     search_placeholder: Search or choose an Issue
     issue_search: Issue number, URL, or title

@@ -106,7 +106,10 @@ class Journal < ActiveRecord::Base
   def private_notes?; false; end
 end
 
+require_relative 'thread_state_isolation'
+
 class ThreadCommentsPersistenceTest < Minitest::Test
+  prepend ThreadStateIsolation
   COMMENTS = Slackmine::ThreadComments
 
   def setup
@@ -462,6 +465,25 @@ class ThreadCommentsPersistenceTest < Minitest::Test
     assert_equal 1, Journal.count
   end
 
+  def test_redis_finalization_failure_after_commit_is_recovered_without_duplicate
+    Slackmine::ThreadState.stub(:finish, ->(*) { raise IOError, 'Redis unavailable after commit' }) do
+      assert_raises(IOError) { persist }
+    end
+    assert_equal 1, Journal.count
+    assert_equal :duplicate, persist
+    assert_equal 1, Journal.count
+  end
+
+  def test_failure_after_recording_journal_before_commit_recovers_rolled_back_claim
+    original_record = Slackmine::ThreadState.method(:record_journal)
+    Slackmine::ThreadState.stub(:record_journal, ->(*args) { original_record.call(*args); raise IOError, 'simulated failure before commit' }) do
+      assert_raises(IOError) { persist }
+    end
+    assert_equal 0, Journal.count
+    assert_equal :saved, persist
+    assert_equal 1, Journal.count
+  end
+
   def test_invalid_timestamp_does_not_save
     ['broken', '1791001000.0000001', '1000', '-1791001000.000001'].each do |timestamp|
       @event['ts'] = timestamp
@@ -471,16 +493,9 @@ class ThreadCommentsPersistenceTest < Minitest::Test
     assert_equal 0, Journal.count
   end
 
-  def test_same_timestamp_from_a_different_author_is_a_separate_comment
+  def test_same_slack_message_is_not_imported_twice_if_mapping_changes
     assert_equal :saved, persist
     @viewer = OpenStruct.new(id: 4)
-    assert_equal :saved, persist
-    assert_equal [3, 4], Journal.order(:id).pluck(:user_id)
-  end
-
-  def test_legacy_marker_comments_are_still_recognized_as_duplicates
-    Journal.insert_all!([{ issue_id: @issue.id, user_id: 3,
-                          notes: "Legacy\n\n#{COMMENTS.source_marker('TTEST', @event)}" }])
     assert_equal :duplicate, persist
     assert_equal 1, Journal.count
   end
@@ -570,7 +585,6 @@ class ThreadCommentsPersistenceTest < Minitest::Test
   end
 
   def test_processing_fetches_only_parent_and_does_not_post_feedback_twice
-    cleanups = []
     @settings['messages'] = { 'work_objects' => { 'product_name' => 'Example Tracker' },
                               'thread_comments' => { 'saved' => '✅ Added a comment to %{product_name} #%{id}.' } }
     calls = []
@@ -587,9 +601,7 @@ class ThreadCommentsPersistenceTest < Minitest::Test
         Slackmine::WorkObjects.stub(:viewer_for, @viewer) do
           Slackmine.stub(:slack_api, api) do
             Slackmine::LinkQuotes.stub(:import, ->(text, *) { text }) do
-              COMMENTS.stub(:schedule_feedback_cleanup, ->(*args) { cleanups << args }) do
-                2.times { COMMENTS.process('ATEST', 'TTEST', @event) }
-              end
+              2.times { COMMENTS.process('ATEST', 'TTEST', @event) }
             end
           end
         end
@@ -597,7 +609,6 @@ class ThreadCommentsPersistenceTest < Minitest::Test
     end
     assert_equal 1, Journal.count
     assert_equal 1, calls.count { |call| call[0] == 'chat.postMessage' }
-    assert_equal [[@issue.project, @event, { 'ts' => '1791001000.000004' }]], cleanups
     feedback = calls.find { |call| call[0] == 'chat.postMessage' }
     assert_equal "✅ Added a comment to Example Tracker <https://redmine.example.com/issues/#{@issue.id}|##{@issue.id}>.", feedback[1]['text']
     history = calls.first[1]

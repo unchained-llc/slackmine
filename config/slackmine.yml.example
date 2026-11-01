@@ -127,9 +127,10 @@ slack:
   # 10 MiB each (or Redmine's lower attachment limit), 50 MiB total per reply.
   thread_comments: false
   # Explicit message-menu connections to an existing Issue (default: true).
-  # No plugin DB table or migration. Signed Bot posts hold the connection in Slack.
+  # Connection and deduplication state uses Sidekiq's Redis connection.
+  # Redis must persist its data and must not evict these keys.
   # Requires commands, Interactivity, channel read/history scopes, message events,
-  # and Bot membership. Keep the Bot's connection/closure posts in the thread.
+  # and Bot membership. Existing Slack-stored connections are not migrated.
   # Past posts are previewed/selected and saved as one connecting-user Journal.
   # Future connected replies are saved immediately, without same-author batching.
   thread_connections: true
@@ -153,6 +154,9 @@ slack:
   # -1 keeps them; 0 suppresses feedback entirely. Original replies and Redmine notes remain.
   # Requires a scheduled-job worker. Project overrides are supported.
   thread_comment_feedback_cleanup_seconds: -1
+  # Connection/disconnection feedback: default -1 keeps it,
+  # 0 suppresses it, and positive values delete it after that many seconds.
+  thread_connection_feedback_cleanup_seconds: -1
   # Publish personal open-issue lists in the shared Slack app's Home tab.
   # Enable App Home > Home Tab and subscribe to app_home_opened at the Events URL.
   # Requires shared slack.events, bot_token and user mappings (or email matching).

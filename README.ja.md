@@ -4,11 +4,11 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **1.8.0**。
+バージョン **2.0.0**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
-Redmine 7 の Issue、Wiki、News、文書、ファイル、フォーラム、作業時間、Version、Project のイベントを Slack に通知するプラグインです。Issue の期日が近づいたとき、担当者に Slack DM で毎日リマインダーを送ることもできます。通知には Redmine の対象ページへのリンクと、色付きの Block Kit attachment を使います。配信は ActiveJob を経由し、通常は Sidekiq の `slack` キューで処理します。
+Redmine 7 の Issue、Wiki、News、文書、ファイル、フォーラム、作業時間、Version、Project のイベントを Slack に通知するプラグインです。Issue の期日が近づいたとき、担当者に Slack DM で毎日リマインダーを送ることもできます。通知には Redmine の対象ページへのリンクと、色付きの Block Kit attachment を使います。配信は ActiveJob を経由し、通常は Sidekiq の `slackmine` キューで処理します。
 
 このプラグインは通知、Work Object操作、任意のスラッシュコマンドを提供します。プロジェクト設定タブやRedmineのカスタムフィールドは追加しません。
 
@@ -22,7 +22,7 @@ Redmine 7 の Issue、Wiki、News、文書、ファイル、フォーラム、�
 | [IssueのWork Objectプレビュー](#チケットの-work-object-previews) | Slack内にチケットカードと詳細を表示。表示項目を設定でき、詳細を開くと最新情報を取得します。 |
 | [Slackからのチケット操作](#work-object-カードと詳細パネルからの操作) | 権限内でステータス・担当者・優先度・期日を変更し、コメント追加、自分への割り当て、作業開始・完了、ウォッチ登録・解除。作業時間の入力はRedmineのフォームを開きます。 |
 | [コメント通知のスレッド化](#redmineコメント通知をスレッドにまとめる) | RedmineのIssueコメント通知をSlackのスレッドにまとめます。 |
-| [任意のスレッドを既存チケットへ接続](#slackの会話スレッドを既存チケットに接続する) | メッセージメニューから接続し、過去分を確認・選択して1コメントに保存。同じ投稿者の連続した発言は通常のカード1枚にまとめ、投稿者が変わると別カードにします。以後の返信・添付を本人名義で取り込み、同じメニューから解除できます。初期値ON。接続情報はSlackのBot投稿に保持し、追加DB・マイグレーションは不要です。 |
+| [任意のスレッドを既存チケットへ接続](#slackの会話スレッドを既存チケットに接続する) | メッセージメニューから接続し、過去分を確認・選択して保存。以後の返信・添付も取り込みます。接続状態と発言の重複判定はRedisに保存し、追加テーブルは使用しません。 |
 | [Slackの返信をRedmineへ保存](#通知スレッドからredmineにコメントを追加) | 対応する通知スレッドへのテキスト・ファイルの返信を、対応付けたユーザー名義のRedmineコメント・添付として保存します。 |
 | [スラッシュコマンド](#スラッシュコマンド) | チケット検索、担当・期日一覧、個人リマインダー、チケット作成、コメント追加、フォームや直接指定によるステータス・担当者変更。1件の結果は設定に応じてカード表示し、プレビュー無効時はテキストで表示します。 |
 | [Slackメッセージからチケット作成](#slackメッセージからチケット作成) | メッセージメニューから権限のあるプロジェクトを選び、本文と投稿元リンクを引き継いだ作成フォームを確認して保存します。 |
@@ -45,7 +45,7 @@ Work Objectのプレビュー・操作、スラッシュコマンド、スレッ
 - [個人の通知メール抑止](#個人ごとの通知メール設定)でユーザーの自動マッチングを使う場合は、[`users:read`](https://docs.slack.dev/reference/scopes/users.read/)と[`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/)の両方を追加し、Slackアプリを再インストールしてください。
 - プロジェクトごとの通知先チャンネル、またはデフォルトのチャンネル。非公開チャンネルを含め、通知先にはボットを招待してください。
 - 期日リマインダーのDMや、時間のかかるフォーム保存結果の通知を使う場合は、Slackアプリの **App Home → Display Messages tab** を有効にしてください。
-- `slack` キューを処理する ActiveJob ワーカー。本番環境では Sidekiq を推奨します。
+- `slackmine` キューを処理する ActiveJob ワーカー。本番環境では Sidekiq を推奨します。
 
 1. Redmine 本体のルートディレクトリから、このリポジトリを `plugins/slackmine` に clone します。
 
@@ -53,10 +53,66 @@ Work Objectのプレビュー・操作、スラッシュコマンド、スレッ
    git clone https://github.com/unchained-llc/slackmine.git plugins/slackmine
    ```
 
-2. [動作設定例](config/slackmine.yml.example)を Redmine アプリケーションの `config/slackmine.yml` にコピーします。
-3. Bot Token と、デフォルトまたはプロジェクト固有のチャンネル ID を設定します。日本語で表示する場合は[日本語の文言例](config/slackmine.messages.ja.yml.example)、英語の文言を変更する場合は[英語の文言例](config/slackmine.messages.yml.example)を `config/slackmine.messages.yml` にコピーして編集します。実際の設定ファイルは Git に含めないでください。
-4. Sidekiq が `slack` キューを処理するように設定し、ボットを通知先チャンネルに招待します。
-5. Redmine と Sidekiq を再起動します。どちらのプロセスも YAML 設定をキャッシュします。
+2. Redmineのルートで `bundle install` を実行してプラグインのGemfileに記載された依存関係を導入します。
+3. [動作設定例](config/slackmine.yml.example)を Redmine アプリケーションの `config/slackmine.yml` にコピーします。
+4. Bot Token と、デフォルトまたはプロジェクト固有のチャンネル ID を設定します。日本語で表示する場合は[日本語の文言例](config/slackmine.messages.ja.yml.example)、英語の文言を変更する場合は[英語の文言例](config/slackmine.messages.yml.example)を `config/slackmine.messages.yml` にコピーして編集します。実際の設定ファイルは Git に含めないでください。
+5. [SidekiqとRedis](#sidekiqとredisのセットアップ)を設定し、ボットを通知先チャンネルに招待します。
+6. Redmine と Sidekiq を再起動します。どちらのプロセスも YAML 設定をキャッシュします。
+
+### SidekiqとRedisのセットアップ
+
+Redmine本体の `config/environments/production.rb` で、`Rails.application.configure do` の中に次を設定します。プラグインのGemfileはSidekiqを自動で読み込まないため、Redmine本体ですでに読み込んでいなければ、ファイルの先頭に `require 'sidekiq'` を追加します。
+
+```ruby
+config.active_job.queue_adapter = :sidekiq
+```
+
+WebとSidekiqワーカーを、同じSidekiq用Redis（またはValkey）に接続します。既存のSidekiq設定を使い、別のSlackmine専用接続は不要です。スレッドの接続状態と重複判定にも使用するため、Redisの永続化・バックアップと `noeviction` を設定してください。[SidekiqのRedis設定](https://github.com/sidekiq/sidekiq/wiki/Using-Redis)
+
+Redmine本体の `config/sidekiq.yml` に `slackmine` キューを追加し、既存の `default`・`mailers` なども必要に応じて残します。[設定例とキューの優先順位](#配信と運用)を確認し、別プロセスのワーカーを起動します。
+
+```sh
+RAILS_ENV=production bundle exec sidekiq
+```
+
+Sidekiqの並列数に合わせてRedmineのDB接続プールを確保します。SidekiqをPumaに組み込む場合は各ワーカーでWebとSidekiqがプールを共有するため、両方の並列数を考慮してください。組み込み方式では `sidekiq.yml` は使われず、Puma側でキューと並列数を指定します。設定方法と制限は[Sidekiqの組み込みガイド](https://github.com/sidekiq/sidekiq/wiki/Embedding)を参照してください。
+
+#### PumaにSidekiqを組み込む例
+
+Sidekiq 7以降とPuma 7以降では、別プロセスの代わりにPumaの各ワーカーでSidekiqを起動できます。以下はRedmine本体の `config/puma.rb` に追加する例です。既存の `threads`・`workers` 設定がある場合は重複させず、それらに合わせて値を調整してください。
+
+```ruby
+require 'sidekiq'
+
+web_threads = Integer(ENV.fetch('RAILS_MAX_THREADS', 5))
+sidekiq_threads = 2
+ENV['REDMINE_DB_POOL'] ||= (web_threads + sidekiq_threads).to_s
+
+threads web_threads, web_threads
+workers 2
+preload_app!
+
+embedded_sidekiq = nil
+before_worker_boot do
+  embedded_sidekiq = Sidekiq.configure_embed do |config|
+    config.queues = %w[default mailers slackmine]
+    config.concurrency = sidekiq_threads
+  end
+  embedded_sidekiq.run
+end
+
+before_worker_shutdown do
+  embedded_sidekiq&.stop
+end
+```
+
+この例では、Redmine本体の `config/database.yml` の `pool` も次のように設定します。Puma以外のプロセスは `RAILS_MAX_THREADS` または5を使います。
+
+```yaml
+pool: <%= ENV['REDMINE_DB_POOL'] || ENV['RAILS_MAX_THREADS'] || 5 %>
+```
+
+各PumaワーカーでSidekiqが起動するため、ジョブの並列数は `workers × sidekiq_threads` です。DBの接続上限には各ワーカーのプールに加え、cronなど他のプロセスの余裕も確保してください。組み込み方式への切り替え時は、不要になった別プロセスのSidekiqを停止します。Pumaのphased restartは組み込みSidekiqに対応しないため、[Sidekiqの制限](https://github.com/sidekiq/sidekiq/wiki/Embedding)を確認してください。
 
 ### Slack権限と機能別の設定一覧
 
@@ -81,7 +137,7 @@ Work Objectのプレビュー・操作、スラッシュコマンド、スレッ
 | 機能 | 必要なSlack権限 | Slack側での追加設定 | YAML・運用上の要件 |
 | --- | --- | --- | --- |
 | [Slackアバターの表示](#slackアバターの表示) | [`users:read`](https://docs.slack.dev/reference/scopes/users.read/)、メール照合には [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) も必要 | — | `slack.use_slack_avatars: true`、ユーザーの対応付け、Web・ワーカーで共有するRailsキャッシュ |
-| 通常のチャンネル通知 | [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) | Botを通知先へ招待 | Bot Token、通知先チャンネル、`slack` キューワーカー |
+| 通常のチャンネル通知 | [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) | Botを通知先へ招待 | Bot Token、通知先チャンネル、`slackmine` キューワーカー |
 | [Issueの画像表示](#issue-の画像表示) | [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) | — | Redmineに添付された対応画像 |
 | [担当者のメンション](#担当者のメンション) | 明示的な対応付けなら追加不要。名前の自動照合は [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) | — | `users` または `slack.auto_map_users_by_name: true` |
 | [メールでのユーザー対応付け](#メールアドレスで閲覧ユーザーを自動対応付けする) | [`users:read`](https://docs.slack.dev/reference/scopes/users.read/)、[`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/) | — | `slack.auto_map_users_by_email: true`、`slack.events.team_id` |
@@ -427,7 +483,7 @@ users:
   alice: 'U0123456789' # 実際のSlackメンバーIDに置き換える
 ```
 
-1. コードと YAML を配置し、Redmine と Sidekiq を再起動します。Sidekiq が `slack` キューを処理していることを確認してください。
+1. コードと YAML を配置し、Redmine と Sidekiq を再起動します。Sidekiq が `slackmine` キューを処理していることを確認してください。
 2. Slack アプリの **Event Subscriptions → Enable Events** を ON にします。Request URL を `https://redmine.example.com/slackmine/events` にし、**Verified** を確認します。別のサーバーでは Redmine の公開 URL に合わせてください。サブディレクトリ配置の場合は、そのパスも含めます。
 3. **Subscribe to bot events** に [`entity_details_requested`](https://docs.slack.dev/reference/events/entity_details_requested/) を追加し、**Save Changes** します。このイベントと [`entity.presentDetails`](https://docs.slack.dev/reference/methods/entity.presentDetails/) に追加 OAuth スコープは不要です。
 4. チャンネルの Work Object カードを開き、ステータス・担当者・期日・説明文を確認します。Redmine で変更後、詳細パネルを再読み込みし、最新値になることを確認します。新しい通知を送る必要はありません。
@@ -478,7 +534,7 @@ slack:
 
 ### Work Object カードと詳細パネルからの操作
 
-Work Objectの詳細表示、操作ボタンからのフォーム表示、軽い変更は受信Webプロセスで処理します。保存後のカード・App Home更新とURL展開は `slack` キューで処理します。Slackリンクを含む編集フォームは引用取得が長引くため保存もキューで処理し、詳細パネルの結果はSlackアプリのメッセージ欄へ送ります。スレッド接続はフォームをすぐ開き、確認画面の履歴取得はまずWebプロセスで処理します。2秒以内に終わらなければSidekiqに切り替え、接続・過去分保存はSidekiqで処理します。App Home一覧の公開とスラッシュコマンドの配信もキューで行います。通常通知・期日リマインダー・返信取り込みも引き続きSidekiqを使います。
+Work Objectの詳細表示、操作ボタンからのフォーム表示、軽い変更は受信Webプロセスで処理します。保存後のカード・App Home更新とURL展開は `slackmine` キューで処理します。Slackリンクを含む編集フォームは引用取得が長引くため保存もキューで処理し、詳細パネルの結果はSlackアプリのメッセージ欄へ送ります。スレッド接続はフォームをすぐ開き、確認画面の履歴取得はまずWebプロセスで処理します。2秒以内に終わらなければSidekiqに切り替え、接続・過去分保存はSidekiqで処理します。App Home一覧の公開とスラッシュコマンドの配信もキューで行います。通常通知・期日リマインダー・返信取り込みも引き続きSidekiqを使います。
 
 操作の同一リクエスト再送は、既存の `Rails.cache` に検証済み本文のSHA-256と受付マーカーを10分間記録して抑止します。入力本文や権限はキャッシュしません。複数Webプロセス間の抑止には `unless_exist` を原子的に扱える共有キャッシュが必要です。キャッシュの消失・無効化で重複の可能性が残り、保存前の失敗も同じリクエストでは再実行しません。再操作する前にRedmineの保存結果を確認してください。
 
@@ -684,11 +740,11 @@ Slack 側では非公開チャンネル用の Bot Token スコープ [`groups:hi
 
 通常のファイル取り込みでは、ファイル付き返信（ファイルだけの投稿も含む）にはBot Tokenスコープ [`files:read`](https://docs.slack.dev/reference/scopes/files.read/) が必要です。追加後にアプリを再インストールしてください。PDF・Office文書・圧縮ファイル・テキストなど、SlackにアップロードされたファイルをBot認証で取得し、返信者名義の通常のRedmineチケット添付として保存します。PNG・JPEG・GIF・WebPは検証して画像表示し、それ以外（SVG・動画を含む）は `attachment:"ファイル名"` の記法で保存し、ファイル名からRedmineの添付表示ページへリンクします。プレビューの可否はRedmineとファイル形式に依存します。取り込み時に添付IDをSlack引用の保存情報へ記録し、明示的に対応付けた添付だけを本文と「Open in Slack」の間にまとめます。通常のコメントや、この対応情報がない過去の返信は従来の表示を維持します。カードが表示されない場合は出典URLの下に添付参照を表示します。画像は添付ファイル名で参照し、`@2x`も維持してRedmineの画像サイズ補正を適用します。1返信につき最大10ファイル、1ファイルは10 MiBとRedmineの添付サイズ上限の小さい方まで、合計50 MiBまでです。Redmineの添付権限・拡張子制限も適用します。コメントと添付は同じトランザクションで保存し、取得・検証に失敗した場合はコメントだけを残しません。再送で保存済み添付を重複登録しません。外部ファイルは非対応です。ファイルの拒否時は失敗を返信し、一時的なAPI・通信エラーはジョブで再試行します。
 
-追加テーブル・DBマイグレーション・Redisへの処理済みID保存は不要です。返信先の親通知1件だけを [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history/) で取得し、アプリIDとチケット見出しの正規URLを検証します。対象は現在の設定で通知先になっているチャンネルです。既存の通知にも返信できますが、他のアプリ・ユーザーの投稿や任意のチケットリンクへの返信は登録しません。
+追加テーブル・DBマイグレーションは不要です。接続状態と発言単位の重複判定にはRedisを使用します。通常の通知スレッドでは、親通知を [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history/) で取得し、アプリIDとチケットURLを検証します。
 
-`users` に明示的に対応付けた、または有効なメール自動照合で特定したユーザーについて、チケットの閲覧権限とトラッカーを含むコメント追加権限を確認します。非公開チケット・無効なプロジェクト・未対応付けユーザーは拒否します。返信の本文は最大10,000文字まで受け付けます。コメントには元メッセージへのURLを保存し、リンクカードが有効なら既存の引用取り込み処理で本文を保存・カード表示します。既存のJournalの `created_on` と `updated_on` の両方にSlackの元の投稿時刻を設定し、浮動小数点を経由せずマイクロ秒まで保持します。新規取り込み時には「編集済み」を付けず、その後Redmineで編集した場合は通常どおり編集日時が更新されます。同じチケット・対応付けた投稿者・投稿時刻のコメントがあれば再送と判断します。既存のチケット行ロック中に重複確認と保存を行います。追加テーブル・カラム・Redisへの状態保存・状態ファイルは不要です。本文をRedmineで編集しても重複判定は維持されます。旧バージョンの出典行付きコメントも重複確認の対象です。
+`users` の対応付けまたはメール自動照合でユーザーを特定し、チケットの閲覧・コメント権限を確認します。非公開チケット・無効なプロジェクト・未対応付けユーザーは拒否します。返信本文は最大10,000文字です。Slackの元投稿時刻をRedmineのコメント日時に保存しますが、重複判定には使用しません。重複判定はチケット・ワークスペース・チャンネル・Slack発言時刻を組み合わせたRedisキーに統一し、確認と保存はチケット行のロック中に行います。
 
-正確な重複判定には、既存の `journals.created_on` がマイクロ秒（小数点以下6桁）を保持できることが必要です。日時の精度が低い環境では、同じ投稿者の別の返信を重複と判断する場合があります。同じチケット・対応付けた投稿者・完全に同じ投稿時刻の別コメントも重複と判断します。コメントを削除したり、投稿者や投稿時刻を変更したりすると、その返信の重複判定はできなくなります。既存コメントの出典行は自動では削除しません。
+Redisの記録が失われると重複や接続の消失が起こり得ます。Redmineの保存とRedisの更新の間で障害が起きた場合、次回の処理時に対象コメントのコミット結果と元発言URLを確認して処理中の記録を復旧します。コメントの編集などにより元発言を確認できない場合は、推測せずエラーにします。旧方式の接続と取り込み済み記録は移行しません。既存スレッドは再接続が必要で、移行前の発言を再度取り込むと重複する場合があります。
 
 Work Objectのカードや詳細ヘッダー、「〜で開く」に使うサービス名は `messages.work_objects.product_name` で変更できます（既定値: `Redmine`）。返信結果の文言には `%{id}` と `%{product_name}` を使えます。成功・拒否の確認メッセージ内の `#%{id}` もチケットへのリンクになります。すべて `projects.<identifier>.messages` でプロジェクト別に上書きできます。
 
@@ -713,7 +769,7 @@ slack:
   thread_comment_feedback_cleanup_seconds: -1
 ```
 
-プロジェクト別に上書きできます。遅延ジョブに元のイベントを渡し、実行時に [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/) でSlackのスレッドを取得します。新しいDBテーブルやキャッシュへの蓄積は行いません。ActiveJobの遅延ジョブに対応したワーカー（Sidekiq等）と、対象チャンネルの返信APIを取得できるBot権限が必要です。待機中はSlackへ投稿せず、保存済みのコメントはまとめ直しません。スレッド取得は最大1000投稿とし、超過時は不完全な取り込みをせずエラーにします。YAML変更後はRedmineとワーカーを再起動してください。
+プロジェクト別に上書きできます。遅延ジョブに元のイベントを渡し、実行時に [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/) でSlackのスレッドを取得します。待機中の会話本文はRedisに蓄積しません。ActiveJobの遅延ジョブに対応したワーカー（Sidekiq等）と、対象チャンネルの返信APIを取得できるBot権限が必要です。待機中はSlackへ投稿せず、保存済みのコメントはまとめ直しません。スレッド取得は最大1000投稿とし、超過時は不完全な取り込みをせずエラーにします。YAML変更後はRedmineとワーカーを再起動してください。
 
 Slackのスレッドで会話を続けていると、返信のたびに「コメントを追加しました」という確認メッセージが入り、会話の流れを追いづらくなることがあります。保存結果を確認する時間を残しつつ、会話を読みやすく保つために、Botの結果メッセージを一定時間後に自動削除できます。たとえば `slack.thread_comment_feedback_cleanup_seconds: 60` なら、結果を表示してから60秒後に片付けます。成功・権限拒否・ファイル拒否の結果メッセージが対象です。
 
@@ -920,7 +976,7 @@ Slackアプリの **Interactivity & Shortcuts** でInteractivityを有効にし�
 
 新規作成用のショートカット名は「メッセージからチケットを作成」、この接続用は「スレッドを既存チケットに接続」に揃えます。新規作成は選択したメッセージだけを使い、接続はスレッド全体を対象とします。名前を変更してもCallback IDは変更しません。
 
-同じメニューを再度開くと接続を解除できます。保存済みコメントは残ります。接続時の取り込みに失敗した場合は、スレッドとRedmineの保存結果を確認してから操作し直します。接続後の返信イベントは従来のSlackキューで処理します。確認後に会話が変更された場合は、接続を解除して確認し直してください。解除後に再接続すると新しい確認を行います。過去分を再度取り込むと引用コメントも改めて作られるため、不要なら確認画面で選択をすべて外してください。
+同じメニューを再度開くと接続を解除できます。保存済みコメントは残ります。接続時の取り込みに失敗した場合は、スレッドとRedmineの保存結果を確認してから操作し直します。接続後の返信イベントは従来のSlackキューで処理します。確認後に会話が変更された場合は、接続を解除して確認し直してください。解除後に再接続すると新しい確認を行います。すでに同じチケットに取り込み済みの発言はRedisの記録で除外します。Redis導入前の取り込み記録は対象外です。
 
 ### Slackアプリ側の作業
 
@@ -951,13 +1007,14 @@ Slack公式資料: [メッセージショートカットの設定](https://docs.
 
 ### Redmine側の作業
 
-コードと設定を配置してRedmineとSidekiqを再起動します。専用テーブル・追加DB・マイグレーションは不要です。接続設定はSlackの署名付きBot投稿、確認情報はSlackのモーダルに保持します。Redmineには通常のコメント・添付だけを保存します。確認送信の重複抑止には既存の `Rails.cache` を使うため、複数Webプロセス間で共有し、`unless_exist` を原子的に扱える設定が必要です。
+Webとワーカーの両方で、Sidekiqが使用する同じRedisへの接続を設定してください。プラグインのGemfileにはSidekiqの依存関係を記載しています。Redisには接続・解除状態と取り込み済み発言の識別情報を期限なしで保存します。RedisのACLでは `GET`・`MGET`・`SET`・`DEL`・`EVAL` を許可してください。永続化・バックアップを有効にし、対象キーがevictされない構成にしてください。Redis障害時は処理を止め、推測して取り込みません。専用DBテーブル・マイグレーションは不要です。旧方式の接続は引き継がないため、既存スレッドは再接続してください。
 
 `config/slackmine.yml` の例:
 
 ```yaml
 slack:
   thread_connections: true   # 省略時もtrue。falseで接続機能を停止
+  thread_connection_feedback_cleanup_seconds: -1  # -1で保持、0で通知しない
   bot_token: 'xoxb-REPLACE-ME'
   events:
     app_id: 'A0123456789'
@@ -974,7 +1031,7 @@ users:
 
 接続ショートカットは待機画面を直接開き、接続状態の確認をSidekiqへ渡します。チケット選択後の履歴確認はWebプロセスで試し、2秒以内なら確認画面をHTTP応答で直接表示します。2秒を超える場合のみ待機画面を返し、画面更新の競合を防ぐため1秒後にSidekiqで履歴確認を続けます。接続・解除と過去分の取り込みは、受付後にSidekiqで実行します。成功時はスレッドの接続・解除投稿、失敗時は本人への通知とログを確認してください。
 
-接続・解除の確認送信は既存の `Rails.cache` で再送を抑止します。処理中・結果不明・成功済みは24時間記録します。接続状態や確認本文の保存先はSlackのままで、キャッシュには処理識別子とマーカーだけを置きます。複数Webプロセスでの抑止には `unless_exist` を原子的に扱える共有キャッシュが必要です。キャッシュの消失や無効化では重複の可能性が残ります。
+接続・解除の確認送信と発言の取り込み済み判定はRedisで管理します。Redmineのホスト名で名前空間を分けるため、ホスト名を変更すると既存の接続と取り込み記録は参照されません。処理中・結果不明の確認送信は再実行せず、保存結果を確認してください。過去分と以後の返信は共通の発言IDで重複判定します。
 
 確認画面の履歴取得はWebで試み、2秒を超えた場合のみジョブへ切り替えます。引用・添付の保存はジョブ側で行います。Webログの `connection preview direct duration_ms` / `connection preview deferred` とSidekiqのジョブ完了時間を確認してください。処理結果が不明な場合は、スレッドとRedmineを確認してから操作し直します。
 
@@ -983,7 +1040,7 @@ users:
 
 過去分の表示は通常の会話ピックアップと同じカード形式です。同じ投稿者の連続した発言は本文を1改行でつなぎ、投稿者・日時（先頭の発言）・「Open in Slack」を1回だけ表示します。投稿者が変わると別カードになります。A→A→B→Aは順番を保った3枚のカードとなり、離れたAの発言をまとめません。各投稿の元URLは保存データに残し、添付は対応するカードに表示します。この表示はWebとメールの両方に適用され、既に保存した接続前の会話にも反映されます。
 
-- 過去分は親投稿を含む対象の人の発言をまとめて取り込みます。接続時のスレッド全体の上限は999投稿で、接続状態を記録する投稿のために1件分を確保します。上限超過や不完全な履歴はエラーにします。
+- 過去分は親投稿を含む対象の人の発言をまとめて取り込みます。接続時のスレッド全体の上限は1000投稿です。上限超過や不完全な履歴はエラーにします。
 - 過去の本文は発言単体1万文字、合計10万文字までです。添付ファイルは最大10件で、サイズと形式の制限も適用します。上限を超える場合はエラーを表示します。
 - Bot投稿・Bot宛ての発言は対象外です。過去分の投稿者はRedmineとの対応付けがなくても引用として保存できます。
 - 確認中から接続確定までの新しい返信を補完します。イベント受信と重なった返信は二重保存しません。補完期間のスレッド全体が1000件を超えると取り込みを完了できず、解除して確認し直す対象になります。
@@ -991,8 +1048,8 @@ users:
 - 添付は既存の取り込み制限に従います。過去分も選択した発言全体で最大10ファイル・合計50 MiBです。画像は引用に関連付け、その他のファイルはダウンロードリンクとして表示します。ファイル転送制限が有効ならダウンロードしません。
 - 表示には既存のSlackリンクカードを使います。カード表示OFF時にも、引用は投稿者・日時・リンク・本文を含むテキストとして読めます。
 - 確認後に選択した発言の本文・投稿者・添付IDが変わった場合は保存せず、再確認を求めます。引用は確認時点の内容です。Slackでの後からの編集・削除は反映しません。接続を解除しても保存済みコメント・添付は削除しません。
-- 接続・解除のBot投稿が接続設定そのものです。削除やSlackの保持期限で失われると状態を復元できません。接続・解除の投稿は残してください。Signing Secretを変更する場合は既存スレッドの接続をやり直してください。
-- DBで接続情報を持たないため、返信イベントをキューで受け取り、Slackのスレッド履歴から接続を確認します。通常の通知スレッドでも追加の履歴取得が発生します。
+- 接続・解除の通知は状態保存に使用しません。`slack.thread_connection_feedback_cleanup_seconds` で自動削除を設定でき、既定の-1は保持、0は通知しません。遅延ジョブをサポートしない `:inline` では通知を残します。
+- 接続状態はRedisから取得します。旧方式のSlack投稿は接続状態として参照しません。
 - 1スレッド1チケット。全体の機能OFFまたはプロジェクトの機能OFFでは返信を保存しません。再度ONにしても停止中の全履歴を自動で取り込みません。
 
 ### 実機確認
@@ -1009,7 +1066,8 @@ users:
 接続機能のテストはSlack APIとRedmineのモデル操作をスタブ化し、追加DBなしで実行します。
 
 ```sh
-ruby -Itest test/thread_connections_test.rb
+SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_state_test.rb
+SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_connections_test.rb
 ```
 
 スタブテストはSlack/Redmineの実機表示や本番配信の確認を代替しません。
@@ -1069,7 +1127,7 @@ Redmineの標準 `IssueQuery` を使い、未完了・有効なプロジェク�
 
 ![毎日の期日リマインダー DM](docs/images/features/due-reminders.webp)
 
-Redmine アプリケーションのタイムゾーンに合わせて、タスクを 1 日 1 回実行します。タスクは `slack` キューにジョブを登録し、ワーカーが DM を送ります。
+Redmine アプリケーションのタイムゾーンに合わせて、タスクを 1 日 1 回実行します。タスクは `slackmine` キューにジョブを登録し、ワーカーが DM を送ります。
 
 ```bash
 cd /path/to/slackmine
@@ -1154,7 +1212,7 @@ messages:
 
 ![Slackmine管理画面：設定値とSidekiqタスク](docs/images/features/administration.webp)
 
-キュー監視・実行履歴・テスト通知は、**ActiveJobがSidekiqを使用している場合のみ利用できます**。他の処理方式では通常通知の動作を維持し、キュー・履歴は取得できない旨を表示してテスト通知ボタンを無効にします。**キュー・タスク**タブで待機中・実行中・予約・リトライ・再試行終了を確認できます。追加後のSlackmine実行履歴を直近100件・最大7日分保存します。追加前の完了履歴は復元できません。履歴は既存のSidekiq用Redis/Valkeyの `slackmine:admin:job_history:v1` に保存し、RedmineのDBテーブルは追加しません。保存対象はジョブ名・ID・結果・時刻・処理時間・例外クラスのみで、引数・メッセージ本文・認証情報は保存しません。プロジェクト選択はテスト通知先に適用し、タスク表示はSlackmine全体を対象にします。通常ジョブの完了は配信確認を保証しません。管理者用テスト通知ボタンは表示中の通知先へ1件を同じslackキューで送信し、送信前に通知先が変わっていないことを確認します。Sidekiqと有効なBot・通知先設定が必要です。各ジョブ集合は先頭500件まで確認し、上限超過を画面に表示します。
+キュー監視・実行履歴・テスト通知は、**ActiveJobがSidekiqを使用している場合のみ利用できます**。他の処理方式では通常通知の動作を維持し、キュー・履歴は取得できない旨を表示してテスト通知ボタンを無効にします。**キュー・タスク**タブで待機中・実行中・予約・リトライ・再試行終了を確認できます。追加後のSlackmine実行履歴を直近100件・最大7日分保存します。追加前の完了履歴は復元できません。履歴は既存のSidekiq用Redis/Valkeyの `slackmine:admin:job_history:v1` に保存し、RedmineのDBテーブルは追加しません。保存対象はジョブ名・ID・結果・時刻・処理時間・例外クラスのみで、引数・メッセージ本文・認証情報は保存しません。プロジェクト選択はテスト通知先に適用し、タスク表示はSlackmine全体を対象にします。通常ジョブの完了は配信確認を保証しません。管理者用テスト通知ボタンは表示中の通知先へ1件を同じslackmineキューで送信し、送信前に通知先が変わっていないことを確認します。Sidekiqと有効なBot・通知先設定が必要です。各ジョブ集合は先頭500件まで確認し、上限超過を画面に表示します。
 
 管理画面のラベル・解説は `config/locales/slackmine_admin.ja.yml` と `config/locales/slackmine_admin.en.yml` に分離し、Redmine の表示言語に従います。Slack の通知文言を設定する `slackmine.messages.yml` とは別です。
 
@@ -1164,24 +1222,26 @@ messages:
 
 ## 配信と運用
 
-`SlackmineNotificationJob` は Redmine のイベント後、ActiveJob の `slack` キューに登録されます。Sidekiq を使う場合は、たとえば次のようにキューを設定します。
+`SlackmineNotificationJob` は Redmine のイベント後、ActiveJob の `slackmine` キューに登録されます。別プロセスのSidekiqを使う場合は、Redmine本体の `config/sidekiq.yml` に、たとえば次のようにキューを設定します。
 
 ```yaml
 :queues:
   - default
   - mailers
-  - slack
+  - slackmine
 ```
+
+重みを指定しない場合は上から順に優先されます。ほかのキューが混雑していると `slackmine` の処理が遅れるため、必要に応じて[重みや専用ワーカー](https://github.com/sidekiq/sidekiq/wiki/Advanced-Options)を設定してください。
 
 Slack API の失敗はログに記録され、Sidekiq が再試行します。Redmine の操作はロールバックされません。通知の投稿に成功した後、一時的な画像プレビューの削除に失敗した場合は、重複投稿を避けるため、エラーを記録するだけでジョブを再試行しません。通知が届かない場合は、`SlackmineNotificationJob` と `Slackmine` のログを確認してください。
 
-開発環境では、ActiveJob の inline アダプターを使えば Sidekiq なしで実行できます。
+開発環境では、ActiveJobのinlineアダプターを使うとSidekiqワーカーなしで実行できます。スレッド連携にはSidekiq gemと同じRedisへの接続が必要です。
 
 ```ruby
 config.active_job.queue_adapter = :inline
 ```
 
-inline 配信は Redmine のリクエスト中に実行されるため、Slack の応答が遅いとリクエスト時間が延びます。本番環境では `slack` キューを処理するワーカーを使ってください。
+inline配信はRedmineのリクエスト中に実行されるため、Slackの応答が遅いとリクエスト時間が延びます。inlineは遅延ジョブに対応しないため、通知の時間差削除と遅いプレビューの延期には対応しません。本番環境では `slackmine` キューを処理するワーカーを使ってください。
 
 通知が届かない場合は、次の順に確認します。
 
@@ -1189,7 +1249,7 @@ inline 配信は Redmine のリクエスト中に実行されるため、Slack �
 2. 実行中の Redmine と Sidekiq が意図した Token を使っているか。`SLACK_BOT_TOKEN` は YAML より優先されます。
 3. プロジェクト識別子が意図したチャンネルに対応しているか、またはデフォルトのチャンネルが設定されているか。ボットがチャンネルに参加しているか。
 4. Bot Token に [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/) があり、オプション機能に応じて [`files:write`](https://docs.slack.dev/reference/scopes/files.write/) または [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) があるか。スコープの追加後にアプリを再インストールしたか。
-5. Sidekiq が `slack` キューを処理しているか。ログでジョブと Slack API のエラーコードを確認してください。
+5. Sidekiq が `slackmine` キューを処理しているか。ログでジョブと Slack API のエラーコードを確認してください。
 
 YAML を変更した場合は Redmine と Sidekiq の両方を再起動してください。ジョブの投稿成功は API への配信を示します。実際の表示や画像は通知先のチャンネルで確認してください。既存のメッセージは更新されません。
 
@@ -1270,7 +1330,7 @@ ruby -Itest test/thread_images_test.rb
 ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 ```
 
-テストはスタブを使って通知の整形と配信ロジックを確認します。追加の `ruby -Itest test/thread_comments_persistence_test.rb` は ActiveRecord と sqlite3 が利用できる環境で実行し、メモリ内のテスト用チケット・コメントテーブルで保存、重複抑制、権限拒否、通知ループ抑制を確認します。追加の `ruby -Itest test/notification_transactions_test.rb` は ActiveRecord と sqlite3 のある環境で別プロセスで実行し、Issue削除と汎用通知モデルのcommit・rollbackを確認します。対応表と実環境での未確認事項は [通知監査](#通知の対応範囲と検証) を参照してください。本番DBやRedisへ接続せず、Slackへの投稿や稼働中のRedmine環境も検証しません。
+テストはスタブを使って通知の整形と配信ロジックを確認します。専用のテストRedisを起動して `SLACKMINE_TEST_REDIS_URL=` を設定します。対象テストは未設定の場合スキップします。追加の `SLACKMINE_TEST_REDIS_URL=redis://127.0.0.1:6379/15 ruby -Itest test/thread_comments_persistence_test.rb` は ActiveRecord と sqlite3 が利用できる環境で実行し、メモリ内のテスト用チケット・コメントテーブルで保存、重複抑制、権限拒否、通知ループ抑制を確認します。追加の `ruby -Itest test/notification_transactions_test.rb` は ActiveRecord と sqlite3 のある環境で別プロセスで実行し、Issue削除と汎用通知モデルのcommit・rollbackを確認します。対応表と実環境での未確認事項は [通知監査](#通知の対応範囲と検証) を参照してください。本番DBやRedisへ接続せず、Slackへの投稿や稼働中のRedmine環境も検証しません。
 
 管理画面の設定・一覧取得は `ruby -Itest test/admin_controller_test.rb`、ERB描画とHTMLエスケープは ActionView が利用できる環境で `ruby -Itest test/admin_view_test.rb` により検証できます。稼働中の Redmine 7 管理画面を検証するものではありません。
 
@@ -1320,6 +1380,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **2.0.0** | スレッドの接続状態と発言の重複判定をSidekiqのRedisに移行。旧接続は再接続が必要です。ジョブのキューを `slackmine` に変更し、接続通知の削除設定と管理画面のフィルターを追加・改善しました。 |
 | **1.8.0** | RedmineのアバターにSlackのプロフィール画像を任意で表示できます。画像を使えない場合は従来のアバターを表示します。 |
 | **1.7.7** | Slackスレッドの接続先をタイトル・番号・URLで検索し、確認画面で取り込む過去の発言を選べます。 |
 | **1.7.6** | 公開チケットのコメント通知に、URLのタイトル・説明・画像をコンパクトに表示できます。YAMLで有効化できます。 |

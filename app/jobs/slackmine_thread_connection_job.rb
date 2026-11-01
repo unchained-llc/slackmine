@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineThreadConnectionJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(app, team, source, view_id = nil, step = nil)
     case step

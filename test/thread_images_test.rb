@@ -243,11 +243,12 @@ class ThreadImageCommentsTest < ThreadCommentsUrlTest
       if index > 0
         teardown
         setup
+        @event['ts'] = '1791115675.755580'
       end
       @attachment.filename = 'F123-Transfer receipt.pdf'
       @attachment.content_type = 'application/pdf'
       Setting.stub(:text_formatting, format) do
-        assert_equal :saved, persist
+        assert_equal :saved, persist(index.zero? ? URL : URL.sub('755579', '755580'))
         assert_includes @journal.notes, 'attachment:"F123-Transfer receipt.pdf"'
         refute_includes @journal.notes, '/attachments/download/'
         refute_includes @journal.notes, '![]'

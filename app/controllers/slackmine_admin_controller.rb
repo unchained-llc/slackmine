@@ -12,7 +12,8 @@ class SlackmineAdminController < ApplicationController
     @scope_projects = Project.order(:name, :id).pluck(:name, :id) unless @tab == 'projects'
     @missing_configuration = Slackmine::AdminOverview.missing_configuration
     @mapping_filter = %w[mapped unmapped all].include?(params[:mapping_filter]) ? params[:mapping_filter] : 'mapped'
-    @changes_only = params[:changes_only] == '1'
+    @show_defaults = params[:show_defaults] == '1'
+    @changes_only = !@show_defaults
 
     case @tab
     when 'settings'

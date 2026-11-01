@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SlackmineUseSlackAvatarsJob < ApplicationJob
-  queue_as :slack
+  queue_as :slackmine
 
   def perform(user_id, key)
     user = User.find_by(id: user_id)
