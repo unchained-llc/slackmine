@@ -881,6 +881,8 @@ For new public Issues and public Issue comments, the plugin recognizes local Mar
 
 This also applies when an existing public Issue comment is edited. With `body_diff.issue.comment: false`, an eligible image appears at its Markdown position in the updated text. With `true`, image previews appear after the comment diff. Deleted comments do not re-upload images. A successful upload replaces the Markdown reference without adding a duplicate attachment link. If a recognized image cannot be uploaded, including when it exceeds the size limit, the notification contains a link to its Redmine attachment or Issue.
 
+Public Issue description updates follow the same behavior using `body_diff.issue.description`: diff notifications preview newly referenced images, while full-text notifications render images in place.
+
 To share a newly uploaded private file with the channel, the plugin posts a temporary top-level reference along with the complete colored card, then removes the temporary preview with [`chat.update`](https://docs.slack.dev/reference/methods/chat.update/). If cleanup fails, it logs the error without reposting the notification. A newly uploaded file that is not ready yet is retried briefly. Already posted Slack messages are not rewritten when this plugin is updated.
 
 ### Wording and templates
@@ -1414,6 +1416,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.2** | Display images added to an Issue description in Slack update notifications. |
 | **2.0.1** | Reuse Slack API connections to speed up Slack integration. Existing configuration remains compatible. |
 | **2.0.0** | Move thread connections and message deduplication to Sidekiq Redis; existing threads must be reconnected. Rename the job queue to `slackmine`, add connection feedback cleanup configuration, and improve administration filters. |
 | **1.8.0** | Optionally display Slack profile pictures as Redmine avatars, with existing avatars as a fallback. |

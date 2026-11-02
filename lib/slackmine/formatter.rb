@@ -298,6 +298,7 @@ module Slackmine
         blocks.insert(2, *updated_body_blocks(section_label('description'), description_detail.old_value, description_detail.value,
                                               blocks: blocks, full_heading: section_label('summary'), full_text: description,
                                               diff_kind: :issue_description))
+        append_new_description_images(blocks, description_detail)
       end
 
       changes = change_fields(issue, visible_issue_changes(details))
@@ -361,6 +362,7 @@ module Slackmine
       if description_detail
         blocks.concat(updated_body_blocks(section_label('description'), description_detail.old_value, description_detail.value,
                                           blocks: blocks, full_heading: section_label('summary'), diff_kind: :issue_description))
+        append_new_description_images(blocks, description_detail)
       end
       changes = change_fields(issue, visible_issue_changes(details))
       content_end = blocks.length
@@ -398,6 +400,15 @@ module Slackmine
         end
       end
       result
+    end
+
+    def append_new_description_images(blocks, detail)
+      return unless Slackmine.body_diff_enabled?(:issue_description)
+
+      previous = image_references(detail.old_value).map { |name| image_reference_name(name).downcase }
+      image_references(detail.value).each do |name|
+        blocks << section_text("![](#{name})") unless previous.include?(image_reference_name(name).downcase)
+      end
     end
 
     # Work Object metadata augments the existing event card; it never contains

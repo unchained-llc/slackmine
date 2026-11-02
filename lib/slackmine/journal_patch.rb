@@ -44,11 +44,14 @@ module Slackmine
          Slackmine.effective_config(issue.project).dig('slack', 'comment_notifications_in_threads') == true
         payload = payload.merge('_slackmine_comment_issue_id' => issue.id)
       end
+      description = enabled_details.find { |detail| detail.respond_to?(:property) && detail.property == 'attr' && detail.prop_key == 'description' }
+      image_names = comment_enabled ? Slackmine::Formatter.image_references(notes) : []
+      image_names += Slackmine::Formatter.image_references(description.value) if description
       Slackmine.enqueue(
         payload,
         project: issue.project,
         event: enabled_details.any? ? slack_event_for_detail(enabled_details.first) : 'comment_added',
-        image_names: comment_enabled ? Slackmine::Formatter.image_references(notes) : [],
+        image_names: image_names,
         journal_id: id, source: self
       )
     end

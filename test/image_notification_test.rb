@@ -1188,6 +1188,22 @@ class EventConfigurationTest < Minitest::Test
     )
   end
 
+  def test_description_update_enqueues_images_without_a_comment
+    item = journal
+    item.notes = ''
+    item.details = [OpenStruct.new(property: 'attr', prop_key: 'description', old_value: '', value: '![](new.png)')]
+    calls = []
+    Slackmine.stub(:config, {}) do
+      Slackmine::Formatter.stub(:issue_payload, {}) do
+        Slackmine.stub(:enqueue, ->(payload, **options) { calls << options }) do
+          item.send(:notify_slack_journal_created)
+        end
+      end
+    end
+    assert_equal ['new.png'], calls.first[:image_names]
+    assert_equal 12, calls.first[:journal_id]
+  end
+
   def test_both_enabled_keep_combined_notification
     assert_journal_notification(
       {}, expected_payload: :comment, expected_details: [:changed],
@@ -1874,6 +1890,66 @@ class ImageNotificationTest < Minitest::Test
           images = message.dig('attachments', 0, 'blocks').select { |block| block['type'] == 'image' }
           assert_equal expected, images.map { |block| block['alt_text'] }
         end
+      end
+    end
+  end
+
+  def test_description_diff_uploads_only_new_images_with_and_without_comment
+    issue = Issue.new(7097)
+    issue.project = OpenStruct.new(name: 'Agentic')
+    issue.define_singleton_method(:subject) { 'Title' }
+    issue.define_singleton_method(:tracker) { OpenStruct.new(name: 'Task') }
+    issue.define_singleton_method(:category) { nil }
+    issue.define_singleton_method(:priority) { nil }
+    issue.define_singleton_method(:description) { '![](old.png)\n![](new.png)' }
+    issue.attachments = %w[old.png new.png].map { |name| OpenStruct.new(filename: name) }
+    record = journal(attachments: [])
+    record.journalized = issue
+    cases = [["![](old.png)", "![](old.png)\n![](new.png)", ['new.png']],
+             ["![](old.png)", "![](old.png)\ntext", []],
+             ["![](old.png)", "![](new.png)", ['new.png']]]
+    Slackmine.stub(:config, { 'slack' => { 'body_diff' => true } }) do
+      Journal.stub(:find_by, record) do
+        cases.each do |before, after, expected|
+          detail = OpenStruct.new(property: 'attr', prop_key: 'description', old_value: before, value: after)
+          [false, true].each do |comment|
+            message = if comment
+                        Slackmine::Formatter.journal_payload(issue, actor: nil, notes: 'Comment', details: [detail])
+                      else
+                        Slackmine::Formatter.issue_payload(issue, actor: nil, action: 'updated', details: [detail])
+                      end
+            uploaded = []
+            Slackmine.stub(:upload_image, ->(file, _) { uploaded << file.filename; "F-#{file.filename}" }) do
+              Slackmine.add_images(message, Slackmine::Formatter.image_references(after), 1, 'token')
+            end
+            assert_equal expected, uploaded
+          end
+        end
+      end
+    end
+  end
+
+  def test_description_full_text_renders_image_at_its_position
+    issue = Issue.new(7097)
+    issue.project = OpenStruct.new(name: 'Agentic')
+    issue.define_singleton_method(:subject) { 'Title' }
+    issue.define_singleton_method(:tracker) { OpenStruct.new(name: 'Task') }
+    issue.define_singleton_method(:category) { nil }
+    issue.define_singleton_method(:priority) { nil }
+    issue.define_singleton_method(:description) { "Before\n\n![](new.png)\n\nAfter" }
+    issue.attachments = [OpenStruct.new(filename: 'new.png')]
+    detail = OpenStruct.new(property: 'attr', prop_key: 'description', old_value: 'Before', value: issue.description)
+    record = journal(attachments: [])
+    record.journalized = issue
+    Slackmine.stub(:config, { 'slack' => { 'body_diff' => false } }) do
+      Journal.stub(:find_by, record) do
+        message = Slackmine::Formatter.issue_payload(issue, actor: nil, action: 'updated', details: [detail])
+        Slackmine.stub(:upload_image, 'F123') { Slackmine.add_images(message, ['new.png'], 1, 'token') }
+        blocks = message.dig('attachments', 0, 'blocks')
+        index = blocks.index { |block| block['type'] == 'image' }
+        refute_nil index
+        assert_includes blocks[index - 1].dig('text', 'text'), 'Before'
+        assert_includes blocks[index + 1].dig('text', 'text'), 'After'
       end
     end
   end
