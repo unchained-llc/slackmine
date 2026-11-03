@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **2.0.1**.
+Version **2.0.3**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1217,6 +1217,8 @@ The same keys can be overridden under `projects.<identifier>.messages.due_remind
 
 In **My account → Email notifications**, below **I don't want to be notified of changes that I make myself**, each user can enable **Skip email for notifications covered by Slack** (off by default). This uses the existing Redmine user preference storage; no database migration is required.
 
+Administrators can also change this preference for each user under **Administration → Users → Edit → Email notifications**.
+
 The option applies to new Issues, Issue changes/comments, Wiki creation/updates, News creation/comments, Documents, project/version/Document files, and forum topics/replies. For Issue updates, only triggers enabled in Redmine’s email notification settings participate in suppression. With general Issue updates disabled and comment mail enabled, an unrelated relation, date, or attachment change does not prevent suppressing the comment email. If general Issue updates are enabled, all visible changes participate. Email is skipped only when all applicable mail triggers have Slack events enabled, a Bot Token and destination channel resolve for that project, and the recipient resolves to a Slack member currently in that channel. An explicit `users` login/email mapping takes priority. Without one, `slack.auto_map_users_by_name: true` can resolve a unique name match; a fresh Slack profile must also have an email address matching the recipient's primary Redmine email (case-insensitive). Existing project/ancestor/default channel routing is used. Invalid explicit mappings do not fall back to automatic matching. Private Issues and private notes, unsupported notification types, and account/security emails retain their normal Redmine email behavior.
 
 Membership is checked synchronously using [`conversations.members`](https://docs.slack.dev/reference/methods/conversations.members/), without caching positive results. The app needs [`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/) for public channels or [`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/) for private channels. Automatic name matching additionally needs [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) and [`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/); missing or mismatched email, inactive/bot/foreign identities, ambiguous names, and lookup failures retain email. Identity verification is performed for each email without caching profile email data. Reinstall after adding scopes. Missing configuration/mapping, nonmembership, API failures, malformed responses, and incomplete pagination retain email. Lookups are limited to ten pages of 200 members, with two-second connection and three-second read timeouts per request.
@@ -1416,6 +1418,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.3** | Allow administrators to change each user’s preference to skip notification emails covered by Slack. |
 | **2.0.2** | Display images added to an Issue description in Slack update notifications. |
 | **2.0.1** | Reuse Slack API connections to speed up Slack integration. Existing configuration remains compatible. |
 | **2.0.0** | Move thread connections and message deduplication to Sidekiq Redis; existing threads must be reconnected. Rename the job queue to `slackmine`, add connection feedback cleanup configuration, and improve administration filters. |

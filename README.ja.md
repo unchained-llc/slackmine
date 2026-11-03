@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **2.0.1**。
+バージョン **2.0.3**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -1204,6 +1204,8 @@ messages:
 
 **個人設定 → メール通知**の「自分自身による変更の通知は不要」の下で、「Slackで通知する内容のメールを停止」を有効にできます（初期値OFF）。既存のRedmineユーザー設定に保存するため、DBマイグレーションは不要です。
 
+管理者は **管理 → ユーザー → 編集 → メール通知**から、各ユーザーの設定を変更することもできます。
+
 対象はIssue作成・変更・コメント、Wiki作成・更新、News作成・コメント、文書追加、プロジェクト／バージョン／文書のファイル追加、フォーラム投稿です。Issue更新では、Redmineのメール通知設定でONにした発生条件だけを判定します。「チケットの更新」がOFFで「コメントの追加」がONなら、同時に関連付けや期日を変更しても、それらのSlack設定はコメントのメール抑制を妨げません。「チケットの更新」がONなら閲覧可能な変更すべてを判定します。該当するメール発生条件すべてのSlackイベントが有効で、そのプロジェクトのBot Tokenと通知先チャンネルが決まり、対応する本人のSlackアカウントが通知先に参加している場合に停止します。`users`でのログイン名／メールアドレスの明示的な対応付けを優先します。対応付けがなければ、`slack.auto_map_users_by_name: true`による一意の名前マッチングを使い、その都度取得したSlackプロフィールのメールアドレスが本人のRedmineの主メールアドレスと一致することも確認します（大文字・小文字は区別しません）。不正な明示的対応付けがある場合は自動マッチングに切り替えません。通知先は既存のプロジェクト・親プロジェクト・デフォルトの探索を使います。非公開Issue・非公開コメント、対象外の通知、アカウント・セキュリティ関連メールは通常どおりです。
 
 参加確認は[`conversations.members`](https://docs.slack.dev/reference/methods/conversations.members/)で同期的に行い、参加済みという結果はキャッシュしません。公開チャンネルは[`channels:read`](https://docs.slack.dev/reference/scopes/channels.read/)、非公開チャンネルは[`groups:read`](https://docs.slack.dev/reference/scopes/groups.read/)が必要です。名前の自動マッチングには[`users:read`](https://docs.slack.dev/reference/scopes/users.read/)と[`users:read.email`](https://docs.slack.dev/reference/scopes/users.read.email/)も必要です。メールアドレスの欠落・不一致、無効なアカウント・ボット・別ワークスペースのアカウント、曖昧な名前、照合失敗時はメールを残します。本人確認はメールごとに行い、プロフィールのメールアドレスはキャッシュしません。スコープ追加後はアプリを再インストールしてください。設定・対応付けの不足、未参加、APIエラー、不正な応答、ページ取得を完了できない場合はメールを残します。取得は1ページ200人、最大10ページで、各リクエストの接続タイムアウトは2秒、読み取りタイムアウトは3秒です。
@@ -1382,6 +1384,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **2.0.3** | 管理者がユーザーごとに「Slackで通知する内容のメールを停止」を設定できるようにしました。 |
 | **2.0.2** | チケットの説明文に追加した画像をSlackの更新通知に表示します。 |
 | **2.0.1** | Slack APIへの接続を再利用し、Slackとの連携処理を高速化しました。既存の設定はそのまま使えます。 |
 | **2.0.0** | スレッドの接続状態と発言の重複判定をSidekiqのRedisに移行。旧接続は再接続が必要です。ジョブのキューを `slackmine` に変更し、接続通知の削除設定と管理画面のフィルターを追加・改善しました。 |

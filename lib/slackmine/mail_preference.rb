@@ -205,6 +205,7 @@ module Slackmine
     class MailPreferenceHook < Redmine::Hook::ViewListener
       render_on :view_layouts_base_html_head, partial: 'slackmine/mail_preference_assets'
       render_on :view_my_account_preferences, partial: 'slackmine/mail_preference'
+      render_on :view_users_form_preferences, partial: 'slackmine/mail_preference'
     end
   end
 end
