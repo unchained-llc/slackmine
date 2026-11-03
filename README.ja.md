@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **2.0.3**。
+バージョン **2.0.4**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -1384,6 +1384,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **2.0.4** | Macの「メール」で通知メール内のSlackアバターとロゴが表示されない問題を修正しました。 |
 | **2.0.3** | 管理者がユーザーごとに「Slackで通知する内容のメールを停止」を設定できるようにしました。 |
 | **2.0.2** | チケットの説明文に追加した画像をSlackの更新通知に表示します。 |
 | **2.0.1** | Slack APIへの接続を再利用し、Slackとの連携処理を高速化しました。既存の設定はそのまま使えます。 |

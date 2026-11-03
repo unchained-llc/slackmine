@@ -60,6 +60,28 @@ class MailInlineAvatarTest < Minitest::Test
     assert doc.css('img').all? { |node| node['src'].start_with?('cid:') }
   end
 
+  def test_template_inline_images_share_one_related_scope_with_slack_images
+    message = Mail.new(content_type: 'multipart/related')
+    alternative = Mail::Part.new(content_type: 'multipart/alternative')
+    alternative.add_part(Mail::Part.new(content_type: 'text/plain', body: 'Plain'))
+    alternative.add_part(Mail::Part.new(content_type: 'text/html', body: avatar +
+      '<span class="slackmine-link-card"><img class="slackmine-mail-icon" src="slackmine-bundled-logo.png"></span>'))
+    message.add_part(alternative)
+    message.attachments.inline['template-logo.png'] = { mime_type: 'image/png', content: PNG }
+
+    Slackmine::MailInlineIcon.embed(message)
+    Slackmine::MailInlineAvatar.stub(:fetch, data) { Slackmine::MailInlineAvatar.embed(message) }
+    received = Mail.read_from_string(message.encoded)
+    assert_equal 1, ([received] + received.all_parts).count { |part| part.mime_type == 'multipart/related' }
+    assert_equal 'multipart/alternative', received.parts.first.mime_type
+    assert_equal ['text/plain', 'text/html'], received.parts.first.parts.map(&:mime_type)
+    assert_equal 3, received.parts.count { |part| part.mime_type == 'image/png' }
+    doc = Nokogiri::HTML.fragment(html_part(received).body.decoded)
+    doc.css('img').each do |node|
+      assert received.parts.any? { |part| part.mime_type == 'image/png' && part.url == node['src'] }
+    end
+  end
+
   def test_failed_fetch_removes_avatar_and_does_not_affect_unmarked_images
     message = Mail.new(content_type: 'text/html', body: avatar + '<img src="https://example.com/other.png">')
     Slackmine::MailInlineAvatar.stub(:fetch, nil) { Slackmine::MailInlineAvatar.embed(message) }

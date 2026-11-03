@@ -60,8 +60,9 @@ module Slackmine
           resources.parts.each { |part| message.add_part(part) }
         else
           parent = parent_of(message, html_part)
-          if parent.mime_type == 'multipart/related'
-            resources.parts.each { |part| parent.add_part(part) }
+          container = related_parent_of(message, html_part)
+          if container
+            resources.parts.each { |part| container.add_part(part) }
           else
             images = resources.parts.dup
             resources.parts.clear
@@ -162,5 +163,14 @@ module Slackmine
       nil
     end
     private_class_method :parent_of
+
+    def related_parent_of(node, target)
+      parent = parent_of(node, target)
+      return unless parent
+      return parent if parent.mime_type == 'multipart/related'
+
+      related_parent_of(node, parent)
+    end
+    private_class_method :related_parent_of
   end
 end

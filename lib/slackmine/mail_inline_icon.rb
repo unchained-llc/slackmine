@@ -44,6 +44,13 @@ module Slackmine
           parent = parent_of(message, html_part)
           html_part.content_transfer_encoding = nil
           html_part.body = html
+          # Templates may already attach logos/avatars around the alternative
+          # body. Keep all CID resources in that existing related scope.
+          container = related_parent_of(message, html_part)
+          if container
+            container.add_part(image)
+            next
+          end
           # PartsList insertion bypasses Mail#add_part's boundary initialization.
           related.parts.clear
           related.add_part(html_part)
@@ -62,5 +69,14 @@ module Slackmine
       nil
     end
     private_class_method :parent_of
+
+    def related_parent_of(node, target)
+      parent = parent_of(node, target)
+      return unless parent
+      return parent if parent.mime_type == 'multipart/related'
+
+      related_parent_of(node, parent)
+    end
+    private_class_method :related_parent_of
   end
 end

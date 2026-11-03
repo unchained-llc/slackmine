@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **2.0.3**.
+Version **2.0.4**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1418,6 +1418,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.4** | Fix Slack avatars and logos missing from notification emails in macOS Mail. |
 | **2.0.3** | Allow administrators to change each user’s preference to skip notification emails covered by Slack. |
 | **2.0.2** | Display images added to an Issue description in Slack update notifications. |
 | **2.0.1** | Reuse Slack API connections to speed up Slack integration. Existing configuration remains compatible. |
