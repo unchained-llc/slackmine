@@ -1,4 +1,4 @@
-.slackmine-link-card { display: block; margin: .7em 0; padding: 14px 16px; max-width: 680px; border: 1px solid rgba(128,128,128,.3); border-color: color-mix(in srgb, currentColor 18%, transparent); border-left: 4px solid var(--slack-card-color, #6D5DFB); border-radius: 8px; background: var(--background-color, transparent); color: inherit; }
+.slackmine-link-card { display: block; margin: .7em 0; padding: 14px 16px; max-width: 680px; border: 1px solid rgba(128,128,128,.3); border-color: color-mix(in srgb, currentColor 18%, transparent); border-left: 4px solid var(--slack-card-color, #6D5DFB); background: var(--background-color, transparent); color: inherit; }
 .slackmine-link-card-header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: .9em; }
 .slackmine-link-card-header img { width: 28px; height: 28px; border-radius: 6px; object-fit: cover; }
 .slackmine-link-card-header > span { opacity: .7; }

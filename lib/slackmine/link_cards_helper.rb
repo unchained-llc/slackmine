@@ -278,7 +278,7 @@ module Slackmine
       elsif card['reply_count'].to_i > 0
         context << %(<span class="slackmine-thread-label" style="display: block; font-size: .85em; margin-bottom: 8px">#{SlackMarkup.escape(link_message('reply_count', project: project, count: card['reply_count'].to_i))}</span>)
       end
-      %(<span class="slackmine-link-card" style="--slack-card-color: #{color(project)}; display: block; box-sizing: border-box; margin: .7em 0; padding: 14px 16px; max-width: 680px; border: 1px solid #d9d9e3; border-left: 4px solid #{color(project)}; border-radius: 8px; background: transparent; color: inherit">#{context}#{header(card, time_formatter, mail: !icon_html.nil?)}<span class="slackmine-link-card-text" style="display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0">#{text}</span>#{SlackMarkup.link(url, label).sub('<a ', '<a style="display: inline-block; margin-top: 6px; font-weight: 700" ')}</span>)
+      %(<span class="slackmine-link-card" style="--slack-card-color: #{color(project)}; display: block; box-sizing: border-box; margin: .7em 0; padding: 14px 16px; max-width: 680px; border: 1px solid #d9d9e3; border-left: 4px solid #{color(project)}; background: transparent; color: inherit">#{context}#{header(card, time_formatter, mail: !icon_html.nil?)}<span class="slackmine-link-card-text" style="display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0">#{text}</span>#{SlackMarkup.link(url, label).sub('<a ', '<a style="display: inline-block; margin-top: 6px; font-weight: 700" ')}</span>)
     end
 
     def render_links(html, issue, viewer, journal_id, state, time_formatter: nil, quoted_urls: [], preview_source: nil, project: nil)
