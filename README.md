@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **2.0.5**.
+Version **2.0.6**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1062,6 +1062,7 @@ For timing checks, compare `connection preview direct duration_ms` or `connectio
 
 Past conversation uses the same cards as normal conversation pickup. Consecutive posts by the same speaker are joined with a single newline, with one speaker/timestamp header (using the first post's time) and one **Open in Slack** link. A speaker change starts a new card: A→A→B→A produces three cards in conversation order. Original post URLs remain in the saved data, and attachments appear in the corresponding card. This applies to both web and email, including previously saved connection-history imports.
 
+- The connection preview shows each speaker, timestamp, and body with a checkbox to exclude a post. Threads over 40 eligible posts are paginated, preserving selections across pages. Unvisited pages remain selected by default.
 - Past history includes eligible human posts, including the parent. The thread scan supports up to 1,000 posts; incomplete or over-limit histories are rejected.
 - Each post is limited to 10,000 characters and the combined past text to 100,000 characters. At most 10 attachments can be imported, subject to file size and type limits. Limits are checked before connecting; exceeding them reports an error.
 - Bot posts and posts addressed to bots are excluded. Historical speakers need not have Redmine mappings to be included as quotations.
@@ -1420,6 +1421,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.6** | Use readable checkboxes for all thread connection previews, preserving selections across pages for more than 40 posts. |
 | **2.0.5** | Improve Slack issue creation with message quote cards and more form fields. |
 | **2.0.4** | Fix Slack avatars and logos missing from notification emails in macOS Mail. |
 | **2.0.3** | Allow administrators to change each user’s preference to skip notification emails covered by Slack. |

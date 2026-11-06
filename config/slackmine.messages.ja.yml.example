@@ -301,6 +301,9 @@ messages:
     save_history: これまでの会話も保存する
     individual_preview: "#%{id} %{subject}
 過去の対象発言%{count}件から取り込む発言を選んでください。初期状態ではすべて選択されています。今後の返信も保存します。"
+    history_page: "%{count}件中 %{first}〜%{last}件 · %{page}/%{pages}ページ"
+    previous_page: 前のページ
+    next_page: 次のページ
     history_mode: 個別選択
     choose_individual: 発言を個別に選択する
     history_group: 発言グループ %{number}

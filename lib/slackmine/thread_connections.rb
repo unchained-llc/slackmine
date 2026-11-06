@@ -18,7 +18,8 @@ module Slackmine
     MAX_SCAN = 1000
     MAX_HISTORY_TEXT = 100_000
     MAX_RECENT = 25
-    SELECTION_GROUP_SIZE = 100
+    SELECTION_GROUP_SIZE = 100 # Compatibility with already-open grouped selection dialogs.
+    SELECTION_PAGE_SIZE = 40
     PREVIEW_DIRECT_SECONDS = 2
     # Keep this outside StandardError so prepare_preview's error-view rescue
     # cannot consume the deadline before pick can queue its fallback.
@@ -43,7 +44,7 @@ module Slackmine
 
     def selection_action?(payload)
       payload['type'] == 'block_actions' && payload.dig('view', 'callback_id') == SAVE_CALLBACK &&
-        Array(payload['actions']).any? { |action| action.is_a?(Hash) && action['action_id'].to_s.match?(/\A(?:post|history_group)_\d+\z/) }
+        Array(payload['actions']).any? { |action| action.is_a?(Hash) && action['action_id'].to_s.match?(/\A(?:post|history_group|history_page)_\d+\z/) }
     end
 
     def scope?(issue, app, team)
@@ -134,7 +135,11 @@ module Slackmine
       if payload['type'] == 'message_action'
         open_picker(app, team, viewer, payload)
       elsif selection_action?(payload)
-        {}
+        if Array(payload['actions']).any? { |action| action['action_id'].to_s.start_with?('history_page_') }
+          change_history_page(app, team, viewer, payload)
+        else
+          {}
+        end
       elsif payload['type'] == 'block_suggestion'
         suggestions(app, team, viewer, payload)
       elsif [PICK_CALLBACK, SELECT_CALLBACK, SEARCH_CALLBACK].include?(payload.dig('view', 'callback_id'))
@@ -356,35 +361,46 @@ module Slackmine
           raise 'History files exceed limit'
         end
         digest = history_digest(messages)
+        raise 'The conversation changed; preview again' if source['history_digest'] && source['history_digest'] != digest
         source = source.merge('history_digest' => digest, 'history_count' => messages.size, 'ready' => true, 'fixed_destination' => true)
         key = source['individual_history'] ? 'individual_preview' : (source['history'] ? 'bulk_preview_history' : 'bulk_preview_future')
         blocks = [section(message(key, project: issue.project, id: issue.id, subject: issue.subject, count: messages.size))]
-        if source['individual_history'] && messages.size <= MAX_HISTORY
-          source = source.merge('selection_layout' => 'checkboxes')
+        if source['individual_history']
+          source = source.merge('selection_layout' => 'paged_checkboxes', 'selection_page' => source.fetch('selection_page', 0))
+          bits = selection_bytes(source)
+          source = source.merge('selection_bits' => Base64.strict_encode64(bits.pack('C*')))
+          page = source['selection_page']
+          pages = [(messages.size.to_f / SELECTION_PAGE_SIZE).ceil, 1].max
+          raise 'Invalid selection page' unless page.is_a?(Integer) && page.between?(0, pages - 1)
+          offset = page * SELECTION_PAGE_SIZE
+          if pages > 1
+            blocks << section(message('history_page', project: issue.project, page: page + 1, pages: pages,
+              first: offset + 1, last: [offset + SELECTION_PAGE_SIZE, messages.size].min, count: messages.size))
+          end
           cache = {}
           call = lambda { |method, body| cache[[method, body]] ||= Slackmine.slack_api(method, body, Slackmine.bot_token(nil), form: true) }
-          messages.each_with_index do |item, index|
+          messages.slice(offset, SELECTION_PAGE_SIZE).to_a.each_with_index do |item, local_index|
+            index = offset + local_index
             card = LinkCards.message_card(item, call)
             text = MessageShortcuts.message_text(item)
+            # A separate section keeps the body readable, rather than squeezing it
+            # into Slack's 75-character option labels.
             shown = text.length > 2500 ? text[0, 2500] + '…' : text
             preview = message('post_preview', project: issue.project, author: card['author'], timestamp: card['timestamp'], text: shown, count: Array(item['files']).size)
             blocks << section(preview)
             option = { 'text' => { 'type' => 'plain_text', 'text' => message('save_post', project: issue.project) }, 'value' => index.to_s }
-            blocks << { 'type' => 'actions', 'block_id' => "post_#{index}", 'elements' => [
-              { 'type' => 'checkboxes', 'action_id' => "post_#{index}", 'options' => [option], 'initial_options' => [option] }] }
+            element = { 'type' => 'checkboxes', 'action_id' => "post_#{index}", 'options' => [option] }
+            element['initial_options'] = [option] if (bits[index / 8] & (1 << (index % 8))) != 0
+            blocks << { 'type' => 'actions', 'block_id' => "post_#{index}", 'elements' => [element] }
           end
-        elsif source['individual_history']
-          messages.each_slice(SELECTION_GROUP_SIZE).with_index do |group, group_index|
-            options = group.each_with_index.map do |item, index|
-              number = group_index * SELECTION_GROUP_SIZE + index
-              body = MessageShortcuts.message_text(item).gsub(/\s+/, ' ').strip
-              label = "#{number + 1}. #{item['user']} #{body.empty? ? message('attachment_only', project: issue.project) : body}"[0, 75]
-              { 'text' => { 'type' => 'plain_text', 'text' => label }, 'value' => number.to_s }
+          if pages > 1
+            buttons = []
+            [[page - 1, 'previous_page'], [page + 1, 'next_page']].each do |target, key|
+              next unless target.between?(0, pages - 1)
+              buttons << { 'type' => 'button', 'action_id' => "history_page_#{target}",
+                'text' => { 'type' => 'plain_text', 'text' => message(key, project: issue.project) } }
             end
-            blocks << { 'type' => 'section', 'block_id' => "history_group_#{group_index}",
-              'text' => { 'type' => 'plain_text', 'text' => message('history_group', project: issue.project, number: group_index + 1) },
-              'accessory' => { 'type' => 'multi_static_select', 'action_id' => "history_group_#{group_index}", 'options' => options, 'initial_options' => options,
-                'placeholder' => { 'type' => 'plain_text', 'text' => message('history_group_placeholder', project: issue.project) } } }
+            blocks << { 'type' => 'actions', 'block_id' => 'history_navigation', 'elements' => buttons }
           end
         end
         view = modal(blocks,
@@ -414,6 +430,60 @@ module Slackmine
       preview_error(view_id, e, project: issue&.project)
     end
 
+    # The signed metadata carries one bit per post, so 1,000 selections fit
+    # comfortably within Slack's private_metadata limit across page changes.
+    def selection_bytes(source)
+      count = source.fetch('history_count')
+      raise 'Invalid selection count' unless count.is_a?(Integer) && count.between?(0, MAX_SCAN)
+      return Array.new((count + 7) / 8, 255) unless source.key?('selection_bits')
+      bits = Base64.strict_decode64(source['selection_bits']).bytes
+      raise 'Invalid selection' unless bits.size == (count + 7) / 8
+      bits
+    end
+
+    def page_selection(source, payload)
+      bits = selection_bytes(source)
+      page = source.fetch('selection_page')
+      count = source.fetch('history_count')
+      pages = [(count.to_f / SELECTION_PAGE_SIZE).ceil, 1].max
+      raise 'Invalid selection page' unless page.is_a?(Integer) && page.between?(0, pages - 1)
+      first = page * SELECTION_PAGE_SIZE
+      (first...[first + SELECTION_PAGE_SIZE, count].min).each do |index|
+        options = state(payload, "post_#{index}")['selected_options']
+        # Missing state is not the same as an explicitly unchecked checkbox.
+        raise 'Incomplete selection state' unless options.is_a?(Array)
+        raise 'Invalid selection' unless options.empty? || (options.size == 1 && options.first['value'] == index.to_s)
+        bits[index / 8] &= ~(1 << (index % 8))
+        bits[index / 8] |= (1 << (index % 8)) unless options.empty?
+      end
+      Base64.strict_encode64(bits.pack('C*'))
+    end
+
+    def change_history_page(app, team, viewer, payload)
+      source = source_for(app, team, viewer, payload)
+      return {} unless source && source['selection_layout'] == 'paged_checkboxes'
+      issue = Issue.find_by(id: source['issue_id'])
+      return {} unless allowed?(issue, viewer, app, team)
+      action = Array(payload['actions']).find { |item| item['action_id'].to_s.match?(/\Ahistory_page_\d+\z/) }
+      return {} unless action
+      target = action['action_id'].delete_prefix('history_page_').to_i
+      pages = [(source['history_count'].to_f / SELECTION_PAGE_SIZE).ceil, 1].max
+      return {} unless target.between?(0, pages - 1) && (target - source['selection_page']).abs == 1
+      source = source.merge('selection_bits' => page_selection(source, payload), 'selection_page' => target)
+      # Replace the controls while loading so a later selection cannot be lost
+      # to an outstanding page request. Slack's hash rejects duplicate clicks.
+      loading = modal([section(message('loading_preview', project: issue.project))], project: issue.project)
+      update_view(payload.dig('view', 'id'), loading, hash: payload.dig('view', 'hash'))
+      loading_installed = true
+      job = SlackmineThreadConnectionJob.perform_later(app, team, source, payload.dig('view', 'id'), 'preview')
+      preview_error(payload.dig('view', 'id'), StandardError.new('Enqueue failed'), project: issue.project) unless job
+      {}
+    rescue StandardError => e
+      Rails.logger&.warn("Slackmine: history page failed: #{e.class}")
+      preview_error(payload.dig('view', 'id'), e, project: issue&.project) if loading_installed
+      {}
+    end
+
     def history_text_length(messages)
       messages.map { |m| MessageShortcuts.message_text(m) }.join("\n\n").length
     end
@@ -422,8 +492,10 @@ module Slackmine
       Digest::SHA256.hexdigest(JSON.generate(messages.map { |m| [m['ts'], fingerprint(m)] }))
     end
 
-    def update_view(view_id, view)
-      Slackmine.slack_api('views.update', { 'view_id' => view_id, 'view' => view }, Slackmine.bot_token(nil))
+    def update_view(view_id, view, hash: nil)
+      body = { 'view_id' => view_id, 'view' => view }
+      body['hash'] = hash if hash
+      Slackmine.slack_api('views.update', body, Slackmine.bot_token(nil))
     end
 
     def preview_error(view_id, error, project: nil)
@@ -455,7 +527,9 @@ module Slackmine
       selected = Array(source['posts']).each_with_index.select do |_, index|
         Array(state(payload, "post_#{index}")['selected_options']).any? { |o| o['value'] == index.to_s }
       end.map(&:first)
-      if source['individual_history']
+      if source['individual_history'] && source['selection_layout'] == 'paged_checkboxes'
+        source = source.merge('selection_bits' => page_selection(source, payload))
+      elsif source['individual_history']
         count = source['history_count'].to_i
         return save_error(source, message('invalid_review'), issue&.project) unless count.between?(0, MAX_SCAN)
         selected_indices = if source['selection_layout'] == 'checkboxes'

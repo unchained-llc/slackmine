@@ -301,6 +301,9 @@ messages:
     save_history: Save the conversation so far
     individual_preview: "#%{id} %{subject}
 Choose which of the %{count} past posts to import. All are selected initially. Future replies will also be saved."
+    history_page: "Posts %{first}–%{last} of %{count} · Page %{page}/%{pages}"
+    previous_page: Previous
+    next_page: Next
     history_mode: Individual selection
     choose_individual: Choose individual posts
     history_group: Posts %{number}

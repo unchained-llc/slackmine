@@ -92,6 +92,24 @@ class ThreadConnectionsTest < Minitest::Test
     { 'type' => 'view_submission', 'user' => { 'id' => 'U123' }, 'view' => view.merge('id' => 'V123', 'state' => { 'values' => values }) }
   end
 
+  def history_values(view, selected: nil)
+    view['blocks'].map do |block|
+      next unless block['block_id'].to_s.match?(/\Apost_\d+\z/)
+      element = block['elements'].first
+      index = block['block_id'].delete_prefix('post_').to_i
+      options = selected ? (selected.include?(index) ? element['options'] : []) : element.fetch('initial_options', [])
+      [block['block_id'], { block['block_id'] => { 'selected_options' => options } }]
+    end.compact.to_h
+  end
+
+  def navigate(view, target, values)
+    action = submitted(view, values).merge('type' => 'block_actions', 'actions' => [{ 'action_id' => "history_page_#{target}" }])
+    assert CONNECTIONS.handles?(action)
+    assert_equal({}, CONNECTIONS.interaction('ATEST', 'TTEST', action))
+    drain_jobs
+    @calls.last.last['view']
+  end
+
   def preview(history: true)
     CONNECTIONS.prepare_preview('ATEST', 'TTEST', @source.merge('history' => history), 'V123')
     @calls.last[1]['view']
@@ -192,45 +210,96 @@ class ThreadConnectionsTest < Minitest::Test
       assert CONNECTIONS.handles?(action)
       assert_equal({}, CONNECTIONS.interaction('ATEST', 'TTEST', action))
       assert_empty @queued
-      state = { 'post_1' => { 'post_1' => { 'selected_options' => [{ 'value' => '1' }] } } }
+      state = history_values(result['view'], selected: [1])
       assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], state)))
       drain_jobs
       assert_equal ['U456'], @saved.first.last[:events].map { |event| event['user'] }
     end
   end
 
-  def test_individual_mode_selects_across_groups_of_100
+  def test_individual_mode_selects_across_pages_and_keeps_unvisited_posts
     context do
       @messages = 101.times.map { |index| { 'ts' => format('1791001%03d.000001', index), 'user' => 'U123', 'text' => "Post #{index}" } }
-      CONNECTIONS.prepare_picker('ATEST', 'TTEST', @source, 'V123')
-      values = { 'search_issue' => { 'search_issue' => { 'selected_option' => { 'value' => '7' } } } }
-      result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(@calls.last.last['view'], values))
-      groups = result['view']['blocks'].select { |block| block['block_id'].to_s.start_with?('history_group_') }
-      assert_equal [100, 1], groups.map { |block| block['accessory']['options'].size }
-      state = { 'history_group_0' => { 'history_group_0' => { 'selected_options' => [{ 'value' => '0' }] } },
-        'history_group_1' => { 'history_group_1' => { 'selected_options' => [{ 'value' => '100' }] } } }
-      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], state)))
+      source = @source.merge('bulk_history' => true, 'individual_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
+      first = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      assert_includes first.to_json, 'Alice'
+      refute_includes first.to_json, 'multi_static_select'
+      second = navigate(first, 1, history_values(first, selected: [0]))
+      assert_includes second.to_json, 'Post 40'
+      first_again = navigate(second, 0, history_values(second, selected: [41]))
+      assert_equal ['0'], history_values(first_again).values.flat_map { |v| v.values.first['selected_options'].map { |o| o['value'] } }
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(first_again, history_values(first_again))))
       drain_jobs
-      assert_equal ['Post 0', 'Post 100'], @saved.first.last[:events].map { |event| event['text'] }
+      assert_equal ['Post 0', 'Post 41'] + (80..100).map { |i| "Post #{i}" }, @saved.first.last[:events].map { |event| event['text'] }
     end
   end
 
-  def test_individual_mode_at_thread_limit_keeps_signed_metadata_and_request_bounded
+  def test_individual_mode_at_thread_limit_keeps_signed_metadata_and_view_bounded
     context do
-      @messages = 999.times.map { |index| { 'ts' => format('179100%04d.000001', index), 'user' => 'U123', 'text' => 'x' * 60 } }
+      @messages = 1000.times.map { |index| { 'ts' => format('179100%04d.000001', index), 'user' => 'U123', 'text' => 'x' * 60 } }
       source = @source.merge('bulk_history' => true, 'individual_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
       view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
       assert_equal CONNECTIONS::SAVE_CALLBACK, view['callback_id']
-      groups = view['blocks'].select { |block| block['block_id'].to_s.start_with?('history_group_') }
-      assert_equal 10, groups.size
+      assert_equal 40, history_values(view).size
+      assert_operator view['blocks'].size, :<=, 100
       assert_operator view['private_metadata'].bytesize, :<, 3000
-      values = groups.to_h { |group| [group['block_id'], { group['block_id'] => { 'selected_options' => group['accessory']['initial_options'] } }] }
-      payload = submitted(view, values).merge('api_app_id' => 'ATEST', 'team' => { 'id' => 'TTEST' })
-      body = URI.encode_www_form('payload' => JSON.generate(payload))
-      assert_operator body.bytesize, :>, 65_536
-      assert_operator body.bytesize, :<, 1_048_576
-      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(view, values)))
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(view, history_values(view))))
       assert_operator @queued.last[2]['selection_bits'].bytesize, :<, 200
+      drain_jobs
+      assert_equal 1000, @saved.first.last[:events].size
+    end
+  end
+
+  def test_twenty_four_posts_have_readable_bodies_and_no_dropdown
+    context do
+      @messages = 24.times.map { |i| { 'ts' => format('1791001%03d.000001', i), 'user' => 'U123', 'text' => "本文 #{i} " + '長い文章' * 40 } }
+      source = @source.merge('bulk_history' => true, 'individual_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      assert_equal 24, history_values(view).size
+      @messages.each { |item| assert_includes view.to_json, item['text'] }
+      refute_includes view.to_json, 'multi_static_select'
+      refute_includes view.to_json, 'history_navigation'
+    end
+  end
+
+  def test_page_change_rejects_changed_history_and_missing_checkbox_state
+    context do
+      @messages = 41.times.map { |i| { 'ts' => format('1791001%03d.000001', i), 'user' => 'U123', 'text' => "Post #{i}" } }
+      source = @source.merge('bulk_history' => true, 'individual_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      result = CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(view, {}))
+      assert_equal 'update', result['response_action']
+      assert_empty @queued
+      @messages.first['text'] = 'Changed'
+      next_view = navigate(view, 1, history_values(view))
+      refute next_view.key?('submit')
+      assert_empty @saved
+    end
+  end
+
+  def test_page_change_uses_view_hash_and_reports_enqueue_failure
+    context do
+      @messages = 41.times.map { |i| { 'ts' => format('1791001%03d.000001', i), 'user' => 'U123', 'text' => "Post #{i}" } }
+      source = @source.merge('bulk_history' => true, 'individual_history' => true, 'history' => true, 'cutoff' => CONNECTIONS.timestamp_now)
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source).merge('hash' => 'current-hash')
+      @reject_enqueue = true
+      result = navigate(view, 1, history_values(view))
+      loading = @calls.find { |method, body| method == 'views.update' && body['hash'] }
+      assert_equal 'current-hash', loading.last['hash']
+      refute loading.last['view'].key?('submit')
+      refute result.key?('submit')
+      assert_empty @saved
+    end
+  end
+
+  def test_unchecking_all_posts_still_connects_future_replies
+    context do
+      source = @source.merge('bulk_history' => true, 'individual_history' => true, 'history' => true)
+      view = CONNECTIONS.prepare_preview('ATEST', 'TTEST', source)
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(view, history_values(view, selected: []))))
+      drain_jobs
+      assert_empty @saved
+      assert Slackmine::ThreadState.connection('ATEST', 'TTEST', @source)['active']
     end
   end
 
@@ -243,9 +312,7 @@ class ThreadConnectionsTest < Minitest::Test
       result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(@calls.last.last['view'], values))
       assert_equal CONNECTIONS::SAVE_CALLBACK, result.dig('view', 'callback_id')
       assert_includes result['view'].to_json, '100 past posts'
-      refute result['view']['blocks'].any? { |block| block['block_id'].to_s.start_with?('post_') }
-      options = result['view']['blocks'].find { |block| block['block_id'] == 'history_group_0' }.dig('accessory', 'initial_options')
-      all_selected = { 'history_group_0' => { 'history_group_0' => { 'selected_options' => options } } }
+      all_selected = history_values(result['view'])
       assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], all_selected)))
       drain_jobs
       assert_equal 100, @saved.first.last[:history_cards].size
@@ -337,7 +404,7 @@ class ThreadConnectionsTest < Minitest::Test
       result = CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(picker, values))
       assert_equal CONNECTIONS::SAVE_CALLBACK, result.dig('view', 'callback_id')
       refute result['view']['blocks'].any? { |block| %w[issue destination].include?(block['block_id']) }
-      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], {})))
+      assert_equal({}, CONNECTIONS.save('ATEST', 'TTEST', @viewer, submitted(result['view'], history_values(result['view']))))
       @issue.define_singleton_method(:notes_addable?) { |*| false }
       assert_equal 'errors', CONNECTIONS.pick('ATEST', 'TTEST', @viewer, submitted(picker, values))['response_action']
     end
