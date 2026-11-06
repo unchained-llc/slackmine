@@ -275,15 +275,93 @@ module Slackmine
                                 'max_length' => multiline ? 3000 : 255 }, optional: key == 'description')
     end
 
+    def creation_fields(issue, viewer)
+      blocks = []
+      %w[status priority].each do |field|
+        next unless issue.safe_attribute?("#{field}_id", viewer)
+        records = field == 'status' ? creation_statuses(issue, viewer) : IssuePriority.active.to_a
+        next if records.empty? || records.size > 100
+        options = records.map { |record| { 'value' => record.id.to_s,
+          'text' => { 'type' => 'plain_text', 'text' => record.name.to_s[0, 75] } } }
+        blocks << input(field, Formatter.field_label(field), { 'type' => 'static_select', 'options' => options }, optional: true)
+      end
+      if issue.safe_attribute?('assigned_to_id', viewer)
+        options = WorkObjects.assignee_options(issue)
+        if options
+          options.each { |option| option['text']['text'] = option['text']['text'][0, 75] }
+          blocks << input('assignee', Formatter.field_label('assignee'),
+            { 'type' => 'static_select', 'options' => options }, optional: true)
+        end
+      end
+      if issue.safe_attribute?('due_date', viewer)
+        blocks << input('due_date', Formatter.field_label('due_date'), { 'type' => 'datepicker' }, optional: true)
+      end
+      if issue.safe_attribute?('category_id', viewer)
+        categories = issue.project.issue_categories.to_a
+        if categories.any? && categories.size <= 99
+          options = [{ 'value' => 'none', 'text' => { 'type' => 'plain_text', 'text' => Formatter.message('values', 'none') } }]
+          options.concat(categories.map { |category| { 'value' => category.id.to_s,
+            'text' => { 'type' => 'plain_text', 'text' => category.name.to_s[0, 75] } } })
+          blocks << input('category', Formatter.field_label('category'),
+            { 'type' => 'static_select', 'options' => options }, optional: true)
+        end
+      end
+      if viewer.allowed_to?(:add_issue_notes, issue.project)
+        blocks << input('new_comment', WorkObjects.work_object_message('add_comment'),
+          { 'type' => 'plain_text_input', 'multiline' => true, 'max_length' => 3000 }, optional: true)
+      end
+      blocks
+    end
+
+    # The tracker is selected in the same form. Offer the union of permitted
+    # initial statuses, then check the selected tracker's workflow on save.
+    def creation_statuses(issue, viewer)
+      previous_tracker = issue.tracker_id
+      issue.allowed_target_trackers(viewer).flat_map do |tracker|
+        issue.tracker_id = tracker.id
+        issue.new_statuses_allowed_to(viewer).to_a
+      end.uniq { |status| status.id }
+    ensure
+      issue.tracker_id = previous_tracker
+    end
+
+    def creation_attributes(issue, viewer, values)
+      attrs = {}
+      %w[status priority assignee category due_date].each do |field|
+        value = field == 'due_date' ? values.dig(field, field, 'selected_date') : values.dig(field, field, 'selected_option', 'value')
+        next if value.nil?
+        attribute = { 'status' => 'status_id', 'priority' => 'priority_id', 'assignee' => 'assigned_to_id', 'category' => 'category_id', 'due_date' => 'due_date' }.fetch(field)
+        return [nil, field] unless issue.safe_attribute?(attribute, viewer)
+        valid = if field == 'due_date'
+                  WorkObjects.valid_date?(value)
+                elsif value == 'none' && %w[assignee category].include?(field)
+                  true
+                elsif value.is_a?(String) && value.match?(/\A[1-9]\d*\z/)
+                  records = case field
+                            when 'status' then issue.new_statuses_allowed_to(viewer)
+                            when 'priority' then IssuePriority.active
+                            when 'assignee' then issue.assignable_users
+                            when 'category' then issue.project.issue_categories
+                            end
+                  records.any? { |record| record.id.to_s == value }
+                end
+        return [nil, field] unless valid
+        attrs[attribute] = value == 'none' ? '' : value
+      end
+      [attrs, nil]
+    end
+
     def modal(kind, id, viewer)
       return attribute_modal(kind, id, viewer) if %w[status assign].include?(kind)
 
       blocks = if kind == 'create'
                  project = Project.find_by(id: id)
-                 trackers = Issue.new(project: project, author: viewer).allowed_target_trackers(viewer).to_a
+                 issue = Issue.new(project: project, author: viewer)
+                 trackers = issue.allowed_target_trackers(viewer).to_a
                  return if trackers.empty? || trackers.length > 100
                  options = trackers.map { |t| { 'text' => { 'type' => 'plain_text', 'text' => t.name.to_s[0, 75] }, 'value' => t.id.to_s } }
-                 [section("<#{Formatter.url("/projects/#{project.identifier}/issues/new")}|#{Formatter.text(message('full_form'))}>"), input('tracker', message('tracker'), { 'type' => 'static_select', 'options' => options }), field('subject'), field('description', multiline: true)]
+                 [input('tracker', message('tracker'), { 'type' => 'static_select', 'options' => options,
+                   'placeholder' => { 'type' => 'plain_text', 'text' => message('tracker_placeholder') } }), field('subject'), field('description', multiline: true)] + creation_fields(issue, viewer)
                else
                  [field('comment', multiline: true)]
                end
@@ -372,8 +450,13 @@ module Slackmine
       kind = view['callback_id'].delete_prefix(PREFIX)
       return {} unless %w[create comment status assign].include?(kind)
       id = view['private_metadata'].to_s
+      source_nonce = nil
+      if kind == 'create' && id.match?(/\A[1-9]\d*:[0-9a-f]{32}\z/)
+        id, source_nonce = id.split(':', 2)
+      end
       return {} unless id.match?(/\A[1-9]\d*\z/)
-      values = view.dig('state', 'values') || {}
+      values = (view.dig('state', 'values') || {}).reject { |key, _| key == '_message_source' }
+      values['_message_source'] = source_nonce if source_nonce
       error_key = error_key(kind)
       User.current = viewer
       return { 'response_action' => 'errors', 'errors' => { error_key => message('denied') } } if view['id'].to_s.empty?
@@ -384,9 +467,10 @@ module Slackmine
         return { 'response_action' => 'errors', 'errors' => { error_key => message('processing') } }
       end
       text = kind == 'create' ? values.dig('description', 'description', 'value') : values.dig('comment', 'comment', 'value')
-      if %w[create comment].include?(kind) && text.to_s.match?(%r{\.slack\.com/archives/}i) &&
+      text = [text, values.dig('new_comment', 'new_comment', 'value')].join("\n") if kind == 'create'
+      if %w[create comment].include?(kind) && (source_nonce || text.to_s.match?(%r{\.slack\.com/archives/}i)) &&
          background_form_valid?(kind, values) && background_form_allowed?(kind, id, viewer, app, team)
-        fields = kind == 'create' ? values.slice('subject', 'description', 'tracker') : values.slice('comment')
+        fields = kind == 'create' ? values.slice('subject', 'description', 'tracker', 'status', 'priority', 'assignee', 'due_date', 'category', 'new_comment', '_message_source') : values.slice('comment')
         job = SlackmineCommandFormJob.perform_later(app, team, payload.dig('user', 'id'), kind, id, fields, viewer.id, view['id'])
         return {} if job
         cache.delete(key)
@@ -441,7 +525,7 @@ module Slackmine
       saved = result.empty?
       Rails.cache.write(key, 'done', expires_in: 86_400) if saved
       Rails.cache.delete(key) unless saved
-      notify_background_form(slack_user, saved ? 'background_saved' : 'background_failed')
+      notify_background_form(slack_user, 'background_failed') unless saved
     rescue StandardError => e
       # A failed or uncertain save must not be retried into a duplicate Issue.
       Rails.logger&.error("Slackmine: command form save failed: #{e.class}")
@@ -466,7 +550,23 @@ module Slackmine
                     'tracker_id' => values.dig('tracker', 'tracker', 'selected_option', 'value') }
           return { 'response_action' => 'errors', 'errors' => { error_key => message('denied') } } unless attrs['subject'].is_a?(String) && attrs['subject'].length.between?(1, 255) && attrs['description'].to_s.length <= 3000
           if issue.allowed_target_trackers(viewer).any? { |tracker| tracker.id.to_s == attrs['tracker_id'] }
+            if %w[status priority assignee due_date category new_comment].any? { |field| values.key?(field) }
+              issue.tracker_id = attrs['tracker_id']
+              extra, invalid_field = creation_attributes(issue, viewer, values)
+              return { 'response_action' => 'errors', 'errors' => { invalid_field => message('denied') } } unless extra
+              attrs.merge!(extra)
+            end
+            comment = values.dig('new_comment', 'new_comment', 'value')
+            unless comment.nil? || (comment.is_a?(String) && comment.length <= 3000 &&
+                (comment.strip.empty? || issue.notes_addable?(viewer)))
+              return { 'response_action' => 'errors', 'errors' => { 'new_comment' => message('denied') } }
+            end
+            if values['_message_source']
+              attrs['description'] = MessageShortcuts.description_with_quote(attrs['description'], values['_message_source'], project, viewer, app, team)
+              return { 'response_action' => 'errors', 'errors' => { error_key => message('message_expired') } } unless attrs['description']
+            end
             issue.send(:safe_attributes=, attrs, viewer)
+            issue.init_journal(viewer, comment) if comment.is_a?(String) && !comment.strip.empty?
             return {} if issue.save
             return { 'response_action' => 'errors', 'errors' => { error_key => issue.errors.full_messages.join('; ')[0, 1500] } }
           end

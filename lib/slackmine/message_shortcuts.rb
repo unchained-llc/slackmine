@@ -71,6 +71,31 @@ module Slackmine
       parts.select { |value| value.is_a?(String) && !value.strip.empty? }.uniq.join("\n")
     end
 
+    def readable_text(text, subject: false)
+      CGI.unescapeHTML(text.to_s.gsub(/<(https?:\/\/[^>|]+)(?:\|([^>]*))?>/) do
+        url, label = Regexp.last_match(1), Regexp.last_match(2)
+        label.to_s.empty? || label == url ? url : (subject ? label : "#{label} (#{url})")
+      end)
+    end
+
+    # Only the explicitly selected, signed Slack payload is retained. This does
+    # not grant access to DM history or other messages in the conversation.
+    def description_with_quote(text, nonce, project, viewer, app, team)
+      source = Rails.cache.read(context_key(app, team, viewer, nonce))
+      return unless source.is_a?(Hash) && source['project_id'] == project.id.to_s && source['url']
+      return text unless LinkCards.enabled?(project) && LinkCards.referenced?(text, LinkCards.parse(source['url']))
+      message = source['message']
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+      call = lambda do |method, body|
+        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        raise Timeout::Error if remaining <= 0
+        Slackmine.slack_api(method, body, Slackmine.bot_token(project), form: true,
+          open_timeout: [0.5, remaining].min, read_timeout: [1, remaining].min)
+      end
+      card = LinkCards.message_card(message, call).merge('channel' => source['channel_name'])
+      text.to_s.rstrip + "\n\n" + LinkQuotes.encode(card, source['url'], project: project)
+    end
+
     def interaction(app, team, payload)
       commands = SlashCommands
       return {} unless commands.enabled? && commands.integration?(app, team)
@@ -94,8 +119,12 @@ module Slackmine
         # Store source content server-side rather than in Slack private_metadata.
         # The cache key binds it to the initiating user and authenticated app/team.
         nonce = SecureRandom.hex(16)
+        message = payload['message'].slice('user', 'username', 'bot_id', 'bot_profile', 'ts')
+        message['text'] = text[0, 6000]
         Rails.cache.write(context_key(app, team, viewer, nonce),
-                          { 'text' => text[0, 3000], 'channel' => channel, 'ts' => ts }, expires_in: 1800)
+                          { 'text' => text[0, 6000], 'message' => message,
+                            'channel_name' => payload.dig('channel', 'name').to_s.empty? ? channel : payload['channel']['name'],
+                            'channel' => channel, 'ts' => ts }, expires_in: 1800)
         projects.sort_by! { |project| Slackmine.channel_id(project) == channel ? 0 : 1 }
         options = projects.first(100).map do |project|
           { 'text' => { 'type' => 'plain_text', 'text' => project.name.to_s[0, 75] }, 'value' => project.id.to_s }
@@ -131,9 +160,14 @@ module Slackmine
         form: true, open_timeout: 0.5, read_timeout: 1)
       link = result['permalink'].to_s
       return error(commands.message('denied')) unless link.match?(%r{\Ahttps://[a-z0-9.-]+\.slack\.com/archives/[CDG][A-Z0-9]+/p\d+(?:\?[^\s]*)?\z}i)
+      target = LinkCards.parse(link)
+      return error(commands.message('denied')) unless target && target['channel'] == source['channel'] && target['ts'] == source['ts']
+      source = source.merge('project_id' => project.id.to_s, 'url' => link)
+      Rails.cache.write(context_key(app, team, viewer, nonce), source, expires_in: 1800)
+      view['private_metadata'] = "#{id}:#{nonce}"
       suffix = "\n\n#{commands.message('source_message')}: #{link}"
-      description = source['text'][0, [3000 - suffix.length, 0].max] + suffix
-      subject = source['text'].lines.find { |line| !line.strip.empty? }.to_s.strip[0, 255]
+      description = readable_text(source['text'])[0, [3000 - suffix.length, 0].max] + suffix
+      subject = readable_text(source['text'], subject: true).lines.find { |line| !line.strip.empty? }.to_s.strip[0, 255]
       view['blocks'].each do |block|
         next unless %w[subject description].include?(block['block_id'])
         block['element']['initial_value'] = block['block_id'] == 'subject' ? subject : description

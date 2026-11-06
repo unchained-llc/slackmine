@@ -17,7 +17,8 @@ class MessageShortcutsTest < Minitest::Test
     @viewer = OpenStruct.new(id: 3)
     @allowed = true
     @viewer.define_singleton_method(:allowed_to?) { |*| true }
-    @project = OpenStruct.new(id: 1, name: 'Example', identifier: 'example', active?: true)
+    @project = OpenStruct.new(id: 1, name: 'Example', identifier: 'example', active?: true,
+      issue_categories: [OpenStruct.new(id: 7, name: 'Operations')])
     @projects = [@project]
     @scope = Object.new
     @scope.define_singleton_method(:where) { |*| self }
@@ -41,7 +42,11 @@ class MessageShortcutsTest < Minitest::Test
             Project.stub(:find_by, ->(id:) { id.to_s == '1' ? @project : nil }) do
               Rails.stub(:cache, @cache) do
                 Slackmine.stub(:channel_id, 'C123') do
-                  Slackmine.stub(:slack_api, ->(*args) { raise Timeout::Error if @timeout; @calls << args; { 'permalink' => @permalink } }) { yield }
+                  Slackmine.stub(:slack_api, lambda { |*args|
+                    raise Timeout::Error if @timeout
+                    @calls << args
+                    args[0] == 'users.info' ? { 'user' => { 'profile' => { 'display_name' => 'Source author' } } } : { 'permalink' => @permalink }
+                  }) { yield }
                 end
               end
             end
@@ -63,6 +68,11 @@ class MessageShortcutsTest < Minitest::Test
 
   def creation_view(picker)
     issue = OpenStruct.new(allowed_target_trackers: [OpenStruct.new(id: 2, name: 'Task')])
+    issue.project = @project
+    issue.assignable_users = [OpenStruct.new(id: 5, name: 'Assignee')]
+    issue.assigned_to_id = nil
+    issue.define_singleton_method(:new_statuses_allowed_to) { |*| [OpenStruct.new(id: 3, name: 'Open')] }
+    issue.define_singleton_method(:safe_attribute?) { |*| true }
     issue.define_singleton_method(:allowed_target_trackers) { |*| [OpenStruct.new(id: 2, name: 'Task')] }
     Issue.stub(:new, issue) do
       Slackmine::Formatter.stub(:url, ->(path) { "https://redmine.example#{path}" }) do
@@ -81,13 +91,18 @@ class MessageShortcutsTest < Minitest::Test
       assert_equal 'update', result['response_action']
       view = result['view']
       assert_equal 'slackmine_command_create', view['callback_id']
-      assert_equal '1', view['private_metadata']
+      assert_equal "1:#{picker['private_metadata']}", view['private_metadata']
       fields = view['blocks'].select { |b| b['type'] == 'input' }.to_h { |b| [b['block_id'], b['element']] }
       assert_equal 'First line', fields['subject']['initial_value']
       assert_includes fields['description']['initial_value'], "First line\nDetails"
       assert_includes fields['description']['initial_value'], @permalink
       assert_equal '1234567890.000001', @calls.last[1]['message_ts']
       assert_equal 'chat.getPermalink', @calls.last[0]
+      assert_equal false, view['blocks'].find { |block| block['block_id'] == 'tracker' }['optional']
+      %w[status priority assignee due_date category new_comment].each do |field|
+        assert_equal true, view['blocks'].find { |block| block['block_id'] == field }['optional']
+      end
+      refute_includes view.to_json, '/issues/new'
       assert SHORTCUTS.handles?(@payload)
       assert SHORTCUTS.handles?(selection(picker))
       assert COMMANDS.handles?('view' => view)
@@ -205,12 +220,27 @@ class MessageShortcutsTest < Minitest::Test
         values[key] = { key => { 'value' => block['element']['initial_value'] } }
       end
       values['tracker'] = { 'tracker' => { 'selected_option' => { 'value' => '2' } } }
+      values['assignee'] = { 'assignee' => { 'selected_option' => { 'value' => '5' } } }
+      values['category'] = { 'category' => { 'selected_option' => { 'value' => '7' } } }
+      values['due_date'] = { 'due_date' => { 'selected_date' => '2026-11-30' } }
+      values['status'] = { 'status' => { 'selected_option' => { 'value' => '3' } } }
+      values['priority'] = { 'priority' => { 'selected_option' => { 'value' => '5' } } }
+      values['new_comment'] = { 'new_comment' => { 'value' => 'Initial comment' } }
       view.merge!('id' => 'V123', 'state' => { 'values' => values })
       submitted = { 'type' => 'view_submission', 'user' => { 'id' => 'U123' }, 'view' => view }
       count = 0
       attributes = nil
       issue = Object.new
       issue.define_singleton_method(:allowed_target_trackers) { |*| [OpenStruct.new(id: 2)] }
+      issue.define_singleton_method(:tracker_id=) { |value| @tracker_id = value }
+      issue.define_singleton_method(:safe_attribute?) { |*| true }
+      issue.define_singleton_method(:assignable_users) { [OpenStruct.new(id: 5)] }
+      issue.define_singleton_method(:new_statuses_allowed_to) { |*| [OpenStruct.new(id: 3)] }
+      issue.define_singleton_method(:notes_addable?) { |*| true }
+      journal = nil
+      issue.define_singleton_method(:init_journal) { |user, text| journal = [user, text] }
+      project = @project
+      issue.define_singleton_method(:project) { project }
       issue.define_singleton_method(:safe_attributes=) { |attrs, _user| attributes = attrs }
       issue.define_singleton_method(:save) { count += 1; true }
       Issue.stub(:new, issue) do
@@ -229,9 +259,132 @@ class MessageShortcutsTest < Minitest::Test
         assert_equal({}, COMMANDS.interaction('ATEST', 'TTEST', submitted))
         assert_equal 1, count
         assert_equal 'First line', attributes['subject']
+        assert_equal '5', attributes['assigned_to_id']
+        assert_equal '7', attributes['category_id']
+        assert_equal '2026-11-30', attributes['due_date']
+        assert_equal '3', attributes['status_id']
+        assert_equal '5', attributes['priority_id']
+        assert_equal [@viewer, 'Initial comment'], journal
         assert_includes attributes['description'], @permalink
+        card = Slackmine::LinkQuotes.blocks(attributes['description']).first.last
+        assert card['verified']
+        assert_equal "First line\nDetails", card['text']
+        refute @calls.any? { |call| %w[conversations.history conversations.replies].include?(call[0]) }
+        issue.define_singleton_method(:notes_addable?) { |*| false }
+        result = COMMANDS.save_form('create', '1', values, @viewer, 'ATEST', 'TTEST', 'subject')
+        assert result.fetch('errors').key?('new_comment')
+        assert_equal 1, count
+        issue.define_singleton_method(:notes_addable?) { |*| true }
+        values['new_comment']['new_comment']['value'] = 'x' * 3001
+        result = COMMANDS.save_form('create', '1', values, @viewer, 'ATEST', 'TTEST', 'subject')
+        assert result.fetch('errors').key?('new_comment')
+        assert_equal 1, count
       end
     end
+  end
+
+  def test_channel_dm_and_group_dm_selections_save_signed_cards_without_fetching_history
+    %w[C123 D123 G123].each do |channel|
+      @payload['channel'] = { 'id' => channel }
+      @permalink = "https://example.slack.com/archives/#{channel}/p1234567890000001"
+      @payload['message']['user'] = 'U456'
+      @payload['message']['text'] = 'Alert <https://example.org/advisory|Advisory &amp; details>'
+      with_context do
+        picker = open_picker
+        view = creation_view(picker)['view']
+        fields = view['blocks'].select { |block| block['type'] == 'input' }.to_h { |block| [block['block_id'], block['element']] }
+        assert_equal 'Alert Advisory & details', fields['subject']['initial_value']
+        description = fields['description']['initial_value']
+        assert_includes description, 'Advisory & details (https://example.org/advisory)'
+        saved = SHORTCUTS.description_with_quote(description, picker['private_metadata'], @project, @viewer, 'ATEST', 'TTEST')
+        card = Slackmine::LinkQuotes.blocks(saved).first.last
+        assert card['verified']
+        assert_equal @payload['message']['text'], card['text']
+        assert_equal 'Source author', card['author']
+        assert_includes @calls.map { |call| call.first(2) }, ['users.info', { 'user' => 'U456' }]
+        assert_equal channel, card['channel']
+        assert_equal @permalink, card['url']
+        refute @calls.any? { |call| %w[conversations.history conversations.replies conversations.members].include?(call[0]) }
+        assert_nil SHORTCUTS.description_with_quote(description, picker['private_metadata'], @project, @viewer, 'OTHER', 'TTEST')
+        other_project = OpenStruct.new(id: 2)
+        assert_nil SHORTCUTS.description_with_quote(description, picker['private_metadata'], other_project, @viewer, 'ATEST', 'TTEST')
+        assert_equal 'Edited description', SHORTCUTS.description_with_quote('Edited description', picker['private_metadata'], @project, @viewer, 'ATEST', 'TTEST')
+        @cache.delete(SHORTCUTS.context_key('ATEST', 'TTEST', @viewer, picker['private_metadata']))
+        assert_nil SHORTCUTS.description_with_quote(description, picker['private_metadata'], @project, @viewer, 'ATEST', 'TTEST')
+      end
+    end
+  end
+
+  def test_selected_quote_respects_disabled_cards_and_viewer_binding
+    with_context do
+      picker = open_picker
+      view = creation_view(picker)['view']
+      text = view['blocks'].find { |block| block['block_id'] == 'description' }.dig('element', 'initial_value')
+      @settings['slack']['link_cards'] = { 'enabled' => false }
+      assert_equal text, SHORTCUTS.description_with_quote(text, picker['private_metadata'], @project, @viewer, 'ATEST', 'TTEST')
+      @viewer.id = 99
+      assert_nil SHORTCUTS.description_with_quote(text, picker['private_metadata'], @project, @viewer, 'ATEST', 'TTEST')
+    end
+  end
+
+  def test_creation_fields_and_values_respect_permissions_and_current_project_candidates
+    issue = OpenStruct.new(project: @project, assignable_users: [OpenStruct.new(id: 5, name: 'Assignee')], assigned_to_id: nil)
+    issue.define_singleton_method(:allowed_target_trackers) { |*| [OpenStruct.new(id: 2)] }
+    issue.define_singleton_method(:new_statuses_allowed_to) { |*| [OpenStruct.new(id: 3, name: 'Open')] }
+    restricted = nil
+    issue.define_singleton_method(:safe_attribute?) { |attribute, _viewer| attribute != restricted }
+    values = {
+      'assignee' => { 'assignee' => { 'selected_option' => { 'value' => '5' } } },
+      'category' => { 'category' => { 'selected_option' => { 'value' => '7' } } },
+      'due_date' => { 'due_date' => { 'selected_date' => '2026-11-30' } }
+    }
+    with_context do
+      attrs, error = COMMANDS.creation_attributes(issue, @viewer, values)
+      assert_nil error
+      assert_equal({ 'assigned_to_id' => '5', 'category_id' => '7', 'due_date' => '2026-11-30' }, attrs)
+      restricted = 'assigned_to_id'
+      refute COMMANDS.creation_fields(issue, @viewer).any? { |block| block['block_id'] == 'assignee' }
+      assert_equal [nil, 'assignee'], COMMANDS.creation_attributes(issue, @viewer, values)
+      restricted = nil
+      issue.assignable_users = []
+      assert_equal [nil, 'assignee'], COMMANDS.creation_attributes(issue, @viewer, values)
+      values['assignee']['assignee']['selected_option']['value'] = 'none'
+      @project.issue_categories = []
+      refute COMMANDS.creation_fields(issue, @viewer).any? { |block| block['block_id'] == 'category' }
+      assert_equal [nil, 'category'], COMMANDS.creation_attributes(issue, @viewer, values)
+      values['category']['category']['selected_option']['value'] = 'none'
+      values['due_date']['due_date']['selected_date'] = '2026-02-30'
+      assert_equal [nil, 'due_date'], COMMANDS.creation_attributes(issue, @viewer, values)
+      values.delete('due_date')
+      assert_equal [{ 'assigned_to_id' => '', 'category_id' => '' }, nil], COMMANDS.creation_attributes(issue, @viewer, values)
+      assert_equal [{}, nil], COMMANDS.creation_attributes(issue, @viewer, {})
+    end
+  end
+
+  def test_permalink_must_identify_the_selected_message
+    with_context do
+      picker = open_picker
+      @permalink = 'https://example.slack.com/archives/D999/p1234567890000001'
+      assert_equal 'errors', creation_view(picker)['response_action']
+      @permalink = 'https://example.slack.com/archives/C123/p1234567890000002'
+      assert_equal 'errors', creation_view(picker)['response_action']
+    end
+  end
+
+  def test_creation_status_and_priority_are_checked_against_current_candidates
+    issue = OpenStruct.new
+    issue.define_singleton_method(:safe_attribute?) { |*| true }
+    issue.define_singleton_method(:new_statuses_allowed_to) { |*| [OpenStruct.new(id: 3)] }
+    values = {
+      'status' => { 'status' => { 'selected_option' => { 'value' => '3' } } },
+      'priority' => { 'priority' => { 'selected_option' => { 'value' => '5' } } }
+    }
+    assert_equal [{ 'status_id' => '3', 'priority_id' => '5' }, nil], COMMANDS.creation_attributes(issue, @viewer, values)
+    values['status']['status']['selected_option']['value'] = '99'
+    assert_equal [nil, 'status'], COMMANDS.creation_attributes(issue, @viewer, values)
+    values['status']['status']['selected_option']['value'] = '3'
+    values['priority']['priority']['selected_option']['value'] = 'none'
+    assert_equal [nil, 'priority'], COMMANDS.creation_attributes(issue, @viewer, values)
   end
 
   def test_permalink_failure_keeps_picker_open_for_retry

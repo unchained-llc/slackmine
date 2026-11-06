@@ -62,6 +62,7 @@ messages:
     save: Save
     cancel: Cancel
     tracker: Tracker
+    tracker_placeholder: Select a tracker
     subject: Subject
     description: Description
   work_objects:

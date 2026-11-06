@@ -560,9 +560,10 @@ module Slackmine
         end
         if payload['deferred'] == true
           enqueue_refresh(app_id, team_id, issue.id, payload.dig('user', 'id'), context, outcome, false)
-          notice = %i[saved unchanged].include?(outcome) ? Formatter.message('commands', 'background_saved') :
-            work_object_message('edit_failed', id: issue.id)
-          Slackmine.slack_api('chat.postMessage', { 'channel' => payload.dig('user', 'id'), 'text' => notice }, Slackmine.bot_token(issue.project))
+          unless %i[saved unchanged].include?(outcome)
+            Slackmine.slack_api('chat.postMessage', { 'channel' => payload.dig('user', 'id'),
+              'text' => work_object_message('edit_failed', id: issue.id) }, Slackmine.bot_token(issue.project))
+          end
           return
         end
         trigger = payload['trigger_id'].to_s

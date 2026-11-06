@@ -3813,15 +3813,27 @@ class WorkObjectDetailsTest < Minitest::Test
     assert_equal 'saved', @refresh_jobs.first[-2]
   end
 
-  def test_deferred_detail_edit_sends_result_without_expired_detail_trigger
+  def test_deferred_detail_edit_saves_without_success_dm_or_expired_detail_trigger
     prepare_action_issue
     edit = action_payload('view_submission', 'view')
     edit['view']['state'] = { 'values' => { 'new_comment' => { 'new_comment.input' => { 'value' => 'Example note' } } } }
     edit['deferred'] = true
     calls = capture_interaction(edit)
     assert_equal 'Example note', @issue.notes.last
-    assert_equal ['chat.postMessage'], calls.map(&:first)
-    assert_equal 'U123', calls.first[1]['channel']
+    assert_empty calls
+    assert_equal 1, @refresh_jobs.size
+  end
+
+  def test_deferred_detail_edit_still_reports_failure
+    prepare_action_issue
+    edit = action_payload('view_submission', 'view')
+    edit['view']['state'] = { 'values' => { 'new_comment' => { 'new_comment.input' => { 'value' => 'Example note' } } } }
+    edit['deferred'] = true
+    WORK.stub(:update_issue, :restricted) do
+      calls = capture_interaction(edit)
+      assert_equal ['chat.postMessage'], calls.map(&:first)
+      assert_equal 'U123', calls.first[1]['channel']
+    end
   end
 
   def test_failed_card_refresh_does_not_retry_saved_comment

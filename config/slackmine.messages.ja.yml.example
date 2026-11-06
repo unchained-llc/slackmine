@@ -62,6 +62,7 @@ messages:
     save: 保存
     cancel: キャンセル
     tracker: トラッカー
+    tracker_placeholder: トラッカーを選択してください
     subject: 題名
     description: 説明
   work_objects:

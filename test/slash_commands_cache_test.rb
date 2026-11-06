@@ -83,7 +83,7 @@ class SlashCommandsCacheTest < Minitest::Test
         COMMANDS.stub(:integration?, true) do
           Slackmine::WorkObjects.stub(:viewer_for, @viewer) do
             COMMANDS.stub(:save_form, ->(*) { calls += 1; {} }) do
-              Slackmine.stub(:slack_api, ->(*) {}) do
+              Slackmine.stub(:slack_api, ->(*) { flunk 'Successful saves must not send a DM' }) do
                 SlackmineCommandFormJob.new.perform(*queued.first)
                 SlackmineCommandFormJob.new.perform(*queued.first)
               end
