@@ -21,7 +21,7 @@ module Slackmine
       :waiting
     end
 
-    def history_replies(project, event, mention_cache: {})
+    def history_replies(project, event, mention_cache: {}, after: nil)
       # Slack is the buffer. Every job reconstructs the same deterministic
       # group; the existing Issue lock + first-post Journal identity deduplicates it.
       messages = []
@@ -41,6 +41,7 @@ module Slackmine
         message.merge('type' => 'message', 'channel' => event['channel'], 'thread_ts' => event['thread_ts'])
       end.select { |message| ThreadComments.reply_event?(message) }
          .reject { |message| ThreadComments.addressed_to_bot?(message, project, cache: mention_cache) }
+         .select { |message| !after || ThreadComments.posted_at(message['ts']) > ThreadComments.posted_at(after) }
          .uniq { |message| message['ts'] }.sort_by { |message| ThreadComments.posted_at(message['ts']) }
     end
 
@@ -60,12 +61,12 @@ module Slackmine
       groups
     end
 
-    def previous_turn(issue, event)
+    def previous_turn(issue, event, after: nil)
       wait, maximum = timing(issue.project)
       mention_cache = {}
       return if wait.zero? || ThreadComments.addressed_to_bot?(event, issue.project, cache: mention_cache)
 
-      replies = history_replies(issue.project, event, mention_cache: mention_cache)
+      replies = history_replies(issue.project, event, mention_cache: mention_cache, after: after)
       # The signed incoming event can precede its appearance in Slack history.
       replies.reject! { |reply| reply['ts'] == event['ts'] }
       replies << event
@@ -78,13 +79,13 @@ module Slackmine
       previous if previous.last['user'] != event['user']
     end
 
-    def collect(issue, app_id, team_id, event)
+    def collect(issue, app_id, team_id, event, after: nil)
       mention_cache = {}
       return [] if ThreadComments.addressed_to_bot?(event, issue.project, cache: mention_cache)
 
       wait, maximum = timing(issue.project)
       return [event] if wait.zero?
-      replies = history_replies(issue.project, event, mention_cache: mention_cache)
+      replies = history_replies(issue.project, event, mention_cache: mention_cache, after: after)
       # The accepted event remains authoritative if Slack history has changed.
       return [event] unless replies.any? { |reply| reply['ts'] == event['ts'] }
       groups = groups_for(replies, wait, maximum)

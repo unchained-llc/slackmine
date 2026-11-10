@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 require_relative 'message_shortcuts_test'
 require_relative '../app/jobs/slackmine_thread_connection_job'
+require_relative '../app/jobs/slackmine_thread_comment_job'
 require_relative '../app/jobs/slackmine_thread_comment_feedback_cleanup_job'
 require_relative 'thread_state_isolation'
 
@@ -69,8 +70,8 @@ class ThreadConnectionsTest < Minitest::Test
             SlackmineThreadConnectionJob.stub(:perform_later, enqueue) do
               SlackmineThreadConnectionJob.stub(:set, ->(wait:) { assert_equal 1, wait; configured }) do
               Slackmine.stub(:slack_api, @api) do
-                Slackmine::ThreadComments.stub(:persist_reply, ->(*args, **opts) { @saved << [args, opts]; :saved }) do
-                  Slackmine::ThreadComments.stub(:feedback, ->(*) {}) do
+                Slackmine::ThreadComments.stub(:persist_reply, ->(*args, **opts) { @saved << [args, opts]; @persist_result || :saved }) do
+                  Slackmine::ThreadComments.stub(:feedback, ->(*args) { (@feedback ||= []) << args }) do
                     cleanup = Object.new
                     cleanup.define_singleton_method(:perform_later) { |*args| @cleanup_store << args; Object.new }
                     cleanup.instance_variable_set(:@cleanup_store, @cleanup)
@@ -706,6 +707,65 @@ class ThreadConnectionsTest < Minitest::Test
       assert_equal :saved, CONNECTIONS.process_reply(current, 'ATEST', 'TTEST', event)
       assert_equal :ignored, CONNECTIONS.process_reply(current.merge('active' => false), 'ATEST', 'TTEST', event)
       assert_equal 1, @saved.size
+    end
+  end
+
+  def test_connected_replies_wait_combine_and_exclude_history_before_cutoff
+    @settings['slack']['thread_comment_batch'] = { 'wait_seconds' => 60, 'max_wait_seconds' => 300 }
+    first = @messages[1].merge('ts' => '1791001001.000001')
+    last = first.merge('ts' => '1791001020.000001', 'text' => 'Another reply')
+    @messages += [first, last]
+    event = first.merge('type' => 'message', 'channel' => 'C123', 'thread_ts' => @source['ts'])
+    current = @source.merge('active' => true)
+    scheduled = []
+    context do
+      Slackmine::ThreadState.stub(:connection, current) do
+        Slackmine::ThreadCommentBatch.stub(:schedule, ->(*args) { scheduled << args; :waiting }) do
+          assert_equal :waiting, Slackmine::ThreadComments.process('ATEST', 'TTEST', event)
+          assert_equal 60, scheduled.last.last
+          assert_empty @saved
+          Time.stub(:now, Time.at(1791001061).utc) do
+            SlackmineThreadCommentJob.new.perform('ATEST', 'TTEST', event, true)
+            assert_empty @saved
+            assert_in_delta 19, scheduled.last.last, 0.01
+          end
+          Time.stub(:now, Time.at(1791001081).utc) do
+            SlackmineThreadCommentJob.new.perform('ATEST', 'TTEST', event, true)
+          end
+          assert_equal 1, @saved.size
+          assert_equal true, @saved.first.last[:connected]
+          assert_equal [first['ts'], last['ts']], @saved.first.last[:events].map { |item| item['ts'] }
+          current['active'] = false
+          assert_equal :ignored, Slackmine::ThreadComments.process('ATEST', 'TTEST', event, batch_ready: true)
+          assert_equal 1, @saved.size
+        end
+      end
+    end
+  end
+
+  def test_connected_author_change_flushes_previous_turn_and_late_job_is_duplicate
+    @settings['slack']['thread_comment_batch'] = { 'wait_seconds' => 60, 'max_wait_seconds' => 300 }
+    first = @messages[1].merge('ts' => '1791001001.000001')
+    second = first.merge('ts' => '1791001005.000001')
+    other = first.merge('ts' => '1791001010.000001', 'user' => 'U123')
+    @messages += [first, second, other]
+    current = @source.merge('active' => true)
+    event = other.merge('type' => 'message', 'channel' => 'C123', 'thread_ts' => @source['ts'])
+    context do
+      Slackmine::ThreadState.stub(:connection, current) do
+        Slackmine::ThreadCommentBatch.stub(:schedule, ->(*) { :waiting }) do
+          assert_equal :waiting, Slackmine::ThreadComments.process('ATEST', 'TTEST', event)
+          assert_equal [first['ts'], second['ts']], @saved.first.last[:events].map { |item| item['ts'] }
+          assert_equal true, @saved.first.last[:connected]
+          @persist_result = :duplicate
+          feedback_count = @feedback.size
+          Time.stub(:now, Time.at(1791001011).utc) do
+            assert_equal :duplicate, Slackmine::ThreadComments.process('ATEST', 'TTEST', event.merge('ts' => first['ts']), batch_ready: true)
+          end
+          assert_equal true, @saved.last.last[:connected]
+          assert_equal feedback_count, @feedback.size
+        end
+      end
     end
   end
 

@@ -109,7 +109,7 @@ module Slackmine
         return :ignored if addressed_to_bot?(event, nil)
         source = { 'channel' => event['channel'], 'ts' => event['thread_ts'] }
         connection = ThreadState.connection(app_id, team_id, source)
-        return ThreadConnections.process_reply(connection, app_id, team_id, event) if connection
+        return ThreadConnections.process_reply(connection, app_id, team_id, event, batch_ready: batch_ready) if connection
       end
       tried_tokens = []
       contexts(app_id, team_id, event['channel']).each do |context|
@@ -129,27 +129,34 @@ module Slackmine
         Slackmine.with_project(issue.project) do
           return :ignored if addressed_to_bot?(event, issue.project)
 
-          wait = ThreadCommentBatch.timing(issue.project).first
-          unless batch_ready || wait.zero?
-            previous = ThreadCommentBatch.previous_turn(issue, event)
-            save_batch(issue, previous, team_id) if previous
-            return ThreadCommentBatch.schedule(app_id, team_id, event, wait)
-          end
-          events = batch_ready ? ThreadCommentBatch.collect(issue, app_id, team_id, event) : [event]
-          return :waiting unless events
-          return :ignored if events.empty?
-          return save_batch(issue, events, team_id)
+          return process_batch(issue, app_id, team_id, event, batch_ready: batch_ready)
         end
         return
       end
       nil
     end
 
-    def save_batch(issue, events, team_id)
+    def process_batch(issue, app_id, team_id, event, batch_ready: false, connected: false, after: nil)
+      options = connected ? { connected: true } : {}
+      boundary = after ? { after: after } : {}
+      wait = ThreadCommentBatch.timing(issue.project).first
+      unless batch_ready || wait.zero?
+        previous = ThreadCommentBatch.previous_turn(issue, event, **boundary)
+        save_batch(issue, previous, team_id, **options) if previous
+        return ThreadCommentBatch.schedule(app_id, team_id, event, wait)
+      end
+      events = batch_ready ? ThreadCommentBatch.collect(issue, app_id, team_id, event, **boundary) : [event]
+      return :waiting unless events
+      return :ignored if events.empty?
+
+      save_batch(issue, events, team_id, **options)
+    end
+
+    def save_batch(issue, events, team_id, **options)
       result = if events.size == 1
-                 persist_reply(issue, events.first, team_id)
+                 persist_reply(issue, events.first, team_id, **options)
                else
-                 persist_reply(issue, events.first, team_id, events: events)
+                 persist_reply(issue, events.first, team_id, events: events, **options)
                end
       # A duplicate never creates a second Journal or a second feedback post.
       feedback(issue, events.first, result) if result != :duplicate

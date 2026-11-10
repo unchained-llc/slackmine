@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **2.0.6**.
+Version **2.0.7**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1067,7 +1067,7 @@ Past conversation uses the same cards as normal conversation pickup. Consecutive
 - Each post is limited to 10,000 characters and the combined past text to 100,000 characters. At most 10 attachments can be imported, subject to file size and type limits. Limits are checked before connecting; exceeding them reports an error.
 - Bot posts and posts addressed to bots are excluded. Historical speakers need not have Redmine mappings to be included as quotations.
 - Replies added between review and confirmation are imported without duplicate saving when reply events overlap. If the thread exceeds 1,000 posts during catch-up, disconnect and review again.
-- Future replies are saved immediately. The notification-thread `thread_comment_batch` setting does not apply to explicit connections.
+- Future replies use `thread_comment_batch`, combining consecutive replies from the same author until the configured deadline or an author change. Posts at or before the connection cutoff are excluded. Zero or omitted wait saves immediately. Disconnecting before a pending batch runs prevents it from being saved.
 - Existing attachment restrictions apply. Selected history is limited to 10 files and 50 MiB combined. Images appear in the quote; other files have download links. Restricted file transfer prevents downloads.
 - Existing Slack link cards render the quotations. When cards are disabled, speaker, timestamp, links, and text remain readable as plain text.
 - If selected text, speaker, or file IDs change after review, saving stops and requires a new review. Later Slack edits/deletions are not synchronized. Disconnecting does not delete saved comments or attachments.
@@ -1421,6 +1421,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.7** | Apply reply batching to connected Slack threads. |
 | **2.0.6** | Use readable checkboxes for all thread connection previews, preserving selections across pages for more than 40 posts. |
 | **2.0.5** | Improve Slack issue creation with message quote cards and more form fields. |
 | **2.0.4** | Fix Slack avatars and logos missing from notification emails in macOS Mail. |

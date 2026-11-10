@@ -654,16 +654,15 @@ module Slackmine
       raise
     end
 
-    def process_reply(current, app, team, event)
+    def process_reply(current, app, team, event, batch_ready: false)
       return :ignored unless current['active'] && enabled?
       return :ignored unless ThreadComments.posted_at(event['ts']) > ThreadComments.posted_at(current['cutoff'])
       issue = Issue.find_by(id: current['issue_id'])
       return :ignored unless scope?(issue, app, team)
       Slackmine.with_project(issue.project) do
         return :ignored if ThreadComments.addressed_to_bot?(event, issue.project)
-        result = ThreadComments.persist_reply(issue, event, team, connected: true)
-        ThreadComments.feedback(issue, event, result) unless result == :duplicate
-        result
+        ThreadComments.process_batch(issue, app, team, event, batch_ready: batch_ready,
+                                     connected: true, after: current['cutoff'])
       end
     end
 

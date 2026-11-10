@@ -2806,15 +2806,19 @@ class WorkObjectNotificationTest < Minitest::Test
     message = Slackmine.stub(:config, @settings) { issue_payload }
     response = Net::HTTPOK.new('1.1', '200', 'OK')
     response.define_singleton_method(:body) { '{"ok":true,"ts":"123.456"}' }
-    http = Object.new
-    captured = nil
-    http.define_singleton_method(:request) do |request|
-      captured = request
+    pool = Object.new
+    requests = []
+    pool.define_singleton_method(:request) do |request, **|
+      requests << request
       response
     end
-    Net::HTTP.stub(:start, ->(*, &block) { block.call(http) }) do
+    Slackmine.stub(:slack_http_pool, pool) do
       Slackmine.post_message(message, 'C123', 'token')
     end
+    assert_equal 1, requests.size
+    captured = requests.first
+    assert_equal '/api/chat.postMessage', captured.path
+    assert_equal 'Bearer token', captured['Authorization']
     assert_equal 'application/x-www-form-urlencoded', captured['Content-Type']
     form = URI.decode_www_form(captured.body).to_h
     assert_equal message['metadata'], JSON.parse(form.fetch('metadata'))
@@ -3287,9 +3291,9 @@ class WorkObjectDetailsTest < Minitest::Test
     chain = Minitest::Mock.new
     journals = Minitest::Mock.new
     journals.expect(:joins, query, [:details])
-    query.expect(:where, query, [{ journal_details: { property: 'attr', prop_key: 'assigned_to_id' } }])
+    query.expect(:where, query, [], journal_details: { property: 'attr', prop_key: 'assigned_to_id' })
     query.expect(:where, chain)
-    chain.expect(:not, query, [{ journal_details: { old_value: [nil, '', '4'] } }])
+    chain.expect(:not, query, [], journal_details: { old_value: [nil, '', '4'] })
     query.expect(:order, query, ['journals.created_on DESC, journals.id DESC, journal_details.id DESC'])
     query.expect(:limit, query, [1])
     query.expect(:pluck, ['3'], ['journal_details.old_value'])
