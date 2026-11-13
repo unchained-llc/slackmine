@@ -292,6 +292,21 @@ module Slackmine
                                      'initial_option' => options.find { |option| option['value'] == (issue.assigned_to_id || 'none').to_s } } }
         end
       end
+      if !comment_only && !assignee_only && issue.safe_attribute?('category_id', viewer)
+        categories = issue.project.issue_categories.to_a
+        if categories.any? && categories.size <= 99 &&
+           (issue.category_id.nil? || categories.any? { |category| category.id == issue.category_id })
+          options = [{ 'value' => 'none', 'text' => { 'type' => 'plain_text', 'text' => Formatter.message('values', 'none') } }]
+          options.concat(select_options(categories))
+          options.each { |option| option['text']['text'] = option['text']['text'][0, 75] }
+          blocks << { 'type' => 'input', 'block_id' => 'category',
+                      'label' => { 'type' => 'plain_text', 'text' => Formatter.field_label('category') },
+                      'element' => { 'type' => 'static_select', 'action_id' => 'category', 'options' => options,
+                                     'initial_option' => options.find { |option| option['value'] == (issue.category_id || 'none').to_s } } }
+        elsif categories.any?
+          blocks << Formatter.section_text("<#{Formatter.url("/issues/#{issue.id}/edit")}|#{SlashCommands.message('full_form')}>")
+        end
+      end
       if !comment_only && issue.safe_attribute?('due_date', viewer)
         element = { 'type' => 'datepicker', 'action_id' => 'due_date' }
         element['initial_date'] = issue.due_date.iso8601 if issue.due_date
@@ -524,6 +539,7 @@ module Slackmine
           status = values.dig('status', modal ? 'status' : 'status.input', 'selected_option', 'value')
           priority = values.dig('priority', modal ? 'priority' : 'priority.input', 'selected_option', 'value')
           assignee = values.dig('assignee', modal ? 'assignee' : 'assignee.input', 'selected_option', 'value')
+          category = values.dig('category', modal ? 'category' : 'category.input', 'selected_option', 'value')
           due_date = values.dig('due_date', modal ? 'due_date' : 'due_date.input', 'selected_date')
           due_date = '' if values.key?('due_date') && due_date.nil?
           comment = values.dig('new_comment', modal ? 'new_comment' : 'new_comment.input', 'value')
@@ -540,18 +556,19 @@ module Slackmine
           return unless status.nil? || status.to_s.match?(/\A[1-9]\d*\z/)
           return unless priority.nil? || priority.to_s.match?(/\A[1-9]\d*\z/)
           return unless assignee.nil? || assignee == 'none' || assignee.to_s.match?(/\A[1-9]\d*\z/)
+          return unless category.nil? || category == 'none' || category.to_s.match?(/\A[1-9]\d*\z/)
           return unless due_date.nil? || due_date == '' || valid_date?(due_date)
           return unless comment.nil? || (comment.is_a?(String) && comment.length <= 3000)
           return unless description.nil? || (description.is_a?(String) && description.length <= 3000)
           reply = modal && source['callback_id'] == 'slackmine_reply'
           if modal && %w[slackmine_add_comment slackmine_reply].include?(source['callback_id'])
             return if comment.to_s.strip.empty?
-            status = priority = assignee = due_date = nil
+            status = priority = assignee = category = due_date = nil
             description = nil
             subject = nil
           end
           outcome = update_issue(issue, viewer, assigned_to_id: assignee, status_id: status,
-                                 priority_id: priority, due_date: due_date, comment: comment, description: description, subject: subject, reply: reply)
+                                 priority_id: priority, category_id: category, due_date: due_date, comment: comment, description: description, subject: subject, reply: reply)
         end
         Rails.logger&.info("Slackmine: Work Object interaction issue=#{issue.id} result=#{outcome}")
         if modal || source['type'] == 'message_attachment'
@@ -658,7 +675,7 @@ module Slackmine
       target.id if target && target.active?
     end
 
-    def update_issue(issue, viewer, assigned_to_id: nil, status_id: nil, priority_id: nil, due_date: nil, comment: nil, description: nil, subject: nil, reply: false)
+    def update_issue(issue, viewer, assigned_to_id: nil, status_id: nil, priority_id: nil, category_id: nil, due_date: nil, comment: nil, description: nil, subject: nil, reply: false)
       previous_user = User.current
       User.current = viewer
       issue.with_lock do
@@ -695,6 +712,13 @@ module Slackmine
           next :restricted unless issue.attributes_editable?(viewer) && issue.safe_attribute?('priority_id', viewer) &&
                                   IssuePriority.active.any? { |priority| priority.id.to_s == priority_id.to_s }
           attrs['priority_id'] = priority_id.to_s unless issue.priority_id.to_s == priority_id.to_s
+        end
+        unless category_id.nil?
+          next :restricted unless issue.attributes_editable?(viewer) && issue.safe_attribute?('category_id', viewer) &&
+                                  (category_id.to_s == 'none' ||
+                                   issue.project.issue_categories.any? { |category| category.id.to_s == category_id.to_s })
+          new_category = category_id.to_s == 'none' ? nil : category_id.to_i
+          attrs['category_id'] = new_category&.to_s || '' unless issue.category_id == new_category
         end
         unless due_date.nil?
           next :restricted unless issue.attributes_editable?(viewer) && issue.safe_attribute?('due_date', viewer) &&

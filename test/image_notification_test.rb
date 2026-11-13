@@ -3115,6 +3115,7 @@ class WorkObjectDetailsTest < Minitest::Test
       self.due_date = attrs['due_date'].empty? ? nil : Date.iso8601(attrs['due_date']) if attrs.key?('due_date')
       self.description = attrs['description'] if attrs.key?('description')
       self.subject = attrs['subject'] if attrs.key?('subject')
+      self.category_id = attrs['category_id'].empty? ? nil : attrs['category_id'].to_i if attrs.key?('category_id')
     end
     @issue.define_singleton_method(:init_journal) do |_viewer, note|
       (@events ||= []) << :journal
@@ -3859,6 +3860,72 @@ class WorkObjectDetailsTest < Minitest::Test
       end
     end
     assert_equal ['Once'], @issue.notes
+  end
+
+  def test_category_modal_displays_current_value_and_saves_changes_and_clear
+    prepare_action_issue
+    @issue.project.issue_categories = [OpenStruct.new(id: 8, name: '設備'), OpenStruct.new(id: 9, name: '運用')]
+    @issue.category_id = 8
+    form = WORK.edit_modal(@issue, @user, @event)
+    field = form['blocks'].find { |block| block['block_id'] == 'category' }
+    assert_equal %w[none 8 9], field.dig('element', 'options').map { |option| option['value'] }
+    assert_equal '8', field.dig('element', 'initial_option', 'value')
+    submission = action_payload('view_submission', 'view')
+    submission['view'] = form.merge('state' => { 'values' => {
+      'category' => { 'category' => { 'selected_option' => { 'value' => '9' } } }
+    } })
+    capture_interaction(submission)
+    assert_equal 9, @issue.category_id
+    assert_equal [:journal, :attributes], @issue.events
+    capture_interaction(submission)
+    assert_equal [:journal, :attributes], @issue.events
+    submission['view']['state']['values']['category']['category']['selected_option']['value'] = 'none'
+    capture_interaction(submission)
+    assert_nil @issue.category_id
+    field = WORK.edit_modal(@issue, @user, {})['blocks'].find { |block| block['block_id'] == 'category' }
+    assert_equal 'none', field.dig('element', 'initial_option', 'value')
+  end
+
+  def test_category_edit_rechecks_permissions_and_project_membership
+    prepare_action_issue
+    @issue.project.issue_categories = [OpenStruct.new(id: 8, name: '設備')]
+    Slackmine.stub(:config, @settings) do
+      assert_equal :restricted, WORK.update_issue(@issue, @user, category_id: '999', comment: 'Must not save')
+      @issue.project.issue_categories = []
+      assert_equal :restricted, WORK.update_issue(@issue, @user, category_id: '8')
+      refute WORK.edit_modal(@issue, @user, {})['blocks'].any? { |block| block['block_id'] == 'category' }
+      @issue.project.issue_categories = [OpenStruct.new(id: 8, name: '設備')]
+      @issue.define_singleton_method(:safe_attribute?) { |attribute, _| attribute != 'category_id' }
+      refute WORK.edit_modal(@issue, @user, {})['blocks'].any? { |block| block['block_id'] == 'category' }
+      assert_equal :restricted, WORK.update_issue(@issue, @user, category_id: '8')
+      assert_equal :restricted, WORK.update_issue(@issue, @user, category_id: 'none')
+      assert_empty @issue.events
+    end
+  end
+
+  def test_category_picker_limits_and_comment_only_forms
+    prepare_action_issue
+    @issue.project.issue_categories = (1..99).map { |id| OpenStruct.new(id: id, name: 'あ' * 80) }
+    form = WORK.edit_modal(@issue, @user, {})
+    field = form['blocks'].find { |block| block['block_id'] == 'category' }
+    assert_equal 100, field.dig('element', 'options').size
+    assert_equal 75, field.dig('element', 'options', 1, 'text', 'text').length
+    @issue.project.issue_categories << OpenStruct.new(id: 100, name: 'Extra')
+    form = WORK.edit_modal(@issue, @user, {})
+    refute form['blocks'].any? { |block| block['block_id'] == 'category' }
+    assert_includes form.to_json, '/issues/7/edit'
+    @issue.project.issue_categories = [OpenStruct.new(id: 8, name: '設備')]
+    %w[slackmine_add_comment slackmine_reply].each do |callback|
+      submission = action_payload('view_submission', 'view')
+      form = WORK.edit_modal(@issue, @user, @event, comment_only: true)
+      refute form['blocks'].any? { |block| block['block_id'] == 'category' }
+      submission['view'] = form.merge('callback_id' => callback, 'state' => { 'values' => {
+        'category' => { 'category' => { 'selected_option' => { 'value' => '8' } } },
+        'new_comment' => { 'new_comment' => { 'value' => 'Comment only' } }
+      } })
+      WORK.stub(:previous_assignee_id, nil) { capture_interaction(submission) }
+      assert_nil @issue.category_id
+    end
   end
 
   def test_invalid_priority_and_date_do_not_write
