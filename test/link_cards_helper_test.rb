@@ -649,4 +649,28 @@ class LinkCardsHelperTest < Minitest::Test
     end
   end
 
+  def test_json_view_can_opt_into_web_cards_when_mail_cards_are_disabled
+    card = {'author'=>'Example','channel'=>'example','timestamp'=>'2026-10-05T00:00:00Z','text'=>'*Saved message*'}
+    source = Slackmine::LinkQuotes.encode(card,LinkCardsTest::URL)
+    @issue.define_singleton_method(:description) { source }
+    @view.controller_name = 'custom_preview'
+    @view.action_name = 'create'
+    @view.request = OpenStruct.new(format:OpenStruct.new(html?:false,js?:false,json?:true))
+    @view.render_source = true
+    @view.define_singleton_method(:format_time) { |value| value.iso8601 }
+    Slackmine.stub(:effective_config,{'slack'=>{'link_cards'=>{'mail_enabled'=>false}}}) do
+      User.stub(:current,Object.new) do
+        Slackmine::LinkCards.stub(:source,source) do
+          Slackmine::LinkCards.stub(:render_links,->(html,*) { html }) do
+            doc = Nokogiri::HTML.fragment(@view.textilizable(@issue,:description,slackmine_card_view:true))
+            assert_equal 1,doc.css('.slackmine-link-card').size
+            refute_includes doc.to_html,'[slack-quote:'
+            assert_includes doc.text,'Saved message'
+            assert_empty doc.css('.slackmine-mail-icon')
+          end
+        end
+      end
+    end
+  end
+
 end

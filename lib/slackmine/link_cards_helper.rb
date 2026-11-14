@@ -21,7 +21,7 @@ module Slackmine
       end
       project = preview ? (issue ? issue.project : @project) : issue.project
       card_view = respond_to?(:controller_name) && options[:formatting] != false &&
-                  (preview || (controller_name == 'issues' && action_name == 'show' && request.format.html?) ||
+                  (options[:slackmine_card_view] == true || preview || (controller_name == 'issues' && action_name == 'show' && request.format.html?) ||
                    (controller_name == 'journals' && action_name == 'update' && request.format.js?))
       mail_cards = LinkCards.enabled?(project) &&
                    Slackmine.effective_config(project).dig('slack', 'link_cards', 'mail_enabled') != false
