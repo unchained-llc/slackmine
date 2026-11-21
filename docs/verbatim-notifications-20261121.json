@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-21",
+  "change": "Set verbatim=true on notification mrkdwn section and field text, including coalesced avatar headings; route direct issue comments through the shared section helper.",
+  "deployment": {
+    "files": {
+      "lib/slackmine/formatter.rb": "44c33088d8d327d8fa74001aa0abacd97257ebee83a271dbe74f2219cb398eeb",
+      "lib/slackmine/notification_coalescing.rb": "283c518d884672682224a49f2076e4e11aca3c6a125bab12f0cb600616da7f7f"
+    },
+    "localAndProductionHashesMatch": true,
+    "reload": "service puma reload; full application restart with embedded Sidekiq confirmed in worker boot logs"
+  },
+  "tests": {
+    "runs": 302,
+    "assertions": 2695,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "environment": "Isolated source copy under /tmp on production host. Ruby 4.0.9, Minitest 5.27.0 installed only under /tmp, MT_NO_PLUGINS=1 to avoid Minitest 6 plugin autoload. Production dependencies unchanged."
+  },
+  "liveAcceptance": {
+    "recipient": "requesting user via app DM",
+    "postMessageOk": true,
+    "apiReadback": "conversations.history missing_scope; no scope changes made",
+    "verifiedBy": "Native Slack accessibility UI",
+    "japaneseAdjacentHostnameRemainsPlainText": true,
+    "explicitTicketLinkRemainsClickable": true,
+    "explicitMentionRenderedAsKota": true,
+    "inlineCodeAndBoldMarkupPreservedInOutgoingPayload": true,
+    "businessRecordsModified": false
+  },
+  "limits": "Applies to mrkdwn text objects. Existing markdown blocks for tables and ordered lists remain on their current path. Existing messages were not resent or edited."
+}

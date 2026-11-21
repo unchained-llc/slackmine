@@ -291,7 +291,7 @@ module Slackmine
         if ordered_list?(notes)
           blocks.insert(2, *mrkdwn_sections(section_label('comment'), notes.to_s))
         else
-          blocks.insert(2, { 'type' => 'section', 'expand' => true, 'text' => { 'type' => 'mrkdwn', 'text' => "*#{text(section_label('comment'))}*\n> #{mrkdwn(notes.to_s).gsub("\n", "\n> ")}" } })
+          blocks.insert(2, section_text("*#{text(section_label('comment'))}*\n> #{mrkdwn(notes.to_s).gsub("\n", "\n> ")}"))
         end
       end
       if action != 'created' && description_detail
@@ -859,7 +859,7 @@ module Slackmine
     end
 
     def section_text(value)
-      { 'type' => 'section', 'expand' => true, 'text' => { 'type' => 'mrkdwn', 'text' => value } }
+      { 'type' => 'section', 'expand' => true, 'text' => { 'type' => 'mrkdwn', 'text' => value, 'verbatim' => true } }
     end
 
     def metadata_enabled?(kind, key, action: nil)
@@ -1135,7 +1135,7 @@ module Slackmine
     end
 
     def field(label, value)
-      { 'type' => 'mrkdwn', 'text' => "*#{text(label)}*\n#{value}" }
+      { 'type' => 'mrkdwn', 'text' => "*#{text(label)}*\n#{value}", 'verbatim' => true }
     end
 
     def change_lines(details)

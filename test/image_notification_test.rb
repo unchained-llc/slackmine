@@ -477,9 +477,9 @@ class NotificationAvatarTest < Minitest::Test
       result = deliver(source, api)
       heading = result.dig('attachments', 0, 'blocks', 0)
       assert_equal 'context', heading['type']
-      assert_equal({ 'type' => 'mrkdwn', 'text' => '🔄 Kota' }, heading['elements'][0])
+      assert_equal({ 'type' => 'mrkdwn', 'text' => '🔄 Kota', 'verbatim' => true }, heading['elements'][0])
       assert_equal({ 'type' => 'image', 'image_url' => @avatar, 'alt_text' => 'Kota' }, heading['elements'][1])
-      assert_equal({ 'type' => 'mrkdwn', 'text' => '*Issue updated*' }, heading['elements'][2])
+      assert_equal({ 'type' => 'mrkdwn', 'text' => '*Issue updated*', 'verbatim' => true }, heading['elements'][2])
       assert_equal source.dig('attachments', 0, 'blocks', 1), result.dig('attachments', 0, 'blocks', 1)
       refute result.key?('_slackmine_actor_id')
       assert_equal original, Marshal.dump(source)
@@ -1712,6 +1712,17 @@ class ImageNotificationTest < Minitest::Test
     assert_equal ['section', 'image'], blocks.map { |block| block['type'] }
     assert_equal 'F123', blocks.last.dig('slack_file', 'id')
     refute_includes blocks.first.dig('text', 'text'), name
+  end
+
+  def test_notification_text_disables_automatic_links_and_preserves_explicit_markup
+    notes = '今回のgit.example.comを確認。 **完了** `host.example.com` [詳細](https://example.com/report) <@U123>'
+    block = Slackmine::Formatter.mrkdwn_sections('Added comment', notes).first
+    assert_equal true, block.dig('text', 'verbatim')
+    assert_includes block.dig('text', 'text'), '今回のgit.example.comを確認。'
+    assert_includes block.dig('text', 'text'), '*完了*'
+    assert_includes block.dig('text', 'text'), '`host.example.com`'
+    assert_includes block.dig('text', 'text'), '<https://example.com/report|詳細>'
+    assert_equal true, Slackmine::Formatter.field('Host', '今回のgit.example.com')['verbatim']
   end
 
   def test_ordered_lists_use_markdown_inside_the_colored_attachment

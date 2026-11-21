@@ -230,7 +230,7 @@ module Slackmine
         elements = []
         segments.each_with_index do |segment, index|
           elements << image.dup if index.positive?
-          elements << { 'type' => 'mrkdwn', 'text' => segment.strip } unless segment.strip.empty?
+          elements << { 'type' => 'mrkdwn', 'text' => segment.strip, 'verbatim' => true } unless segment.strip.empty?
         end
         source.merge('elements' => elements)
       else
