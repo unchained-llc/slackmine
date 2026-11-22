@@ -4,7 +4,7 @@
 
 ![Slackmine — Slack and Redmine integration](docs/assets/slackmine-icon.png)
 
-Version **2.0.8**.
+Version **2.0.9**.
 
 The plugin was renamed from **Redmine Event Notifications for Slack** (`redmine_slack_notification`) to **Slackmine** as it grew from notifications into a broader Slack–Redmine integration. Internal names, plugin ID, configuration filename and endpoints now use `slackmine`; the former names are no longer supported.
 
@@ -1421,6 +1421,7 @@ version numbers are editorial labels, not a record of published releases or Git 
 
 | Version | Highlights |
 | --- | --- |
+| **2.0.9** | Preserve code blocks and prefer line boundaries when splitting long Slack notifications. |
 | **2.0.8** | Add category selection, changes, and clearing to the Slack issue edit modal. |
 | **2.0.7** | Apply reply batching to connected Slack threads. |
 | **2.0.6** | Use readable checkboxes for all thread connection previews, preserving selections across pages for more than 40 posts. |

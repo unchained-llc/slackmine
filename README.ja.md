@@ -4,7 +4,7 @@
 
 ![Slackmine — SlackとRedmineの連携](docs/assets/slackmine-icon.png)
 
-バージョン **2.0.8**。
+バージョン **2.0.9**。
 
 通知機能からSlackとRedmineの統合へ機能が広がったため、**Redmine Event Notifications for Slack**（`redmine_slack_notification`）から **Slackmine** に改名しました。内部名・プラグインID・設定ファイル名・エンドポイントも `slackmine` に統一し、旧名の互換対応は設けていません。
 
@@ -1385,6 +1385,7 @@ ruby -Itest test/thread_comment_feedback_cleanup_test.rb
 
 | バージョン | 主な変更 |
 | --- | --- |
+| **2.0.9** | 長いSlack通知を改行優先で分割し、コードブロックの崩れを修正しました。 |
 | **2.0.8** | Slackのチケット編集モーダルでカテゴリの選択・変更・解除に対応しました。 |
 | **2.0.7** | 接続したSlackスレッドの返信にも待機・まとめ保存を適用しました。 |
 | **2.0.6** | スレッド接続の発言選択を本文付きチェックボックスに統一し、40件超では選択を保持してページ分けします。 |

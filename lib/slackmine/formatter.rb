@@ -717,6 +717,8 @@ module Slackmine
 
     def mrkdwn_sections(heading, value, limit: 2800)
       markdown = value.to_s.gsub("\r\n", "\n").gsub("\r", "\n")
+      return [] if markdown.empty?
+
       markdown_text = heading ? "**#{text(heading)}**\n\n#{markdown}" : markdown
       # Slack caps all Markdown blocks in one message at 12,000 characters.
       # Keep the existing section path for longer notes rather than dropping text.
@@ -724,11 +726,69 @@ module Slackmine
         return [{ 'type' => 'markdown', 'text' => markdown_text }]
       end
 
-      chunks = value.to_s.each_char.each_slice(limit).map(&:join)
-      chunks.each_with_index.map do |chunk, index|
-        content = index.zero? && heading ? "*#{text(heading)}*\n#{mrkdwn(chunk)}" : mrkdwn(chunk)
-        section_text(content)
+      contents = []
+      content = heading ? "*#{text(heading)}*\n" : ''
+      # Parse fences before splitting: Slack renders each section independently.
+      # A fence must therefore open and close within the same section.
+      source = markdown
+      cursor = 0
+      append_text = lambda do |plain|
+        remaining = mrkdwn(plain)
+        until remaining.empty?
+          if content.length >= limit
+            contents << content
+            content = ''
+          end
+          part, remaining = split_section_text(remaining, limit - content.length)
+          if part.empty?
+            contents << content unless content.empty?
+            content = ''
+            next
+          end
+          content += part
+          unless remaining.empty?
+            contents << content
+            content = ''
+          end
+        end
       end
+      source.to_enum(:scan, /^[ \t]*(?<fence>`{3,}|~{3,})[^\n]*\n(?<body>.*?)^[ \t]*\k<fence>[ \t]*(?=\n|\z)/m).each do
+        match = Regexp.last_match
+        append_text.call(source[cursor...match.begin(0)])
+        body = text(match[:body])
+        # Slack has no language-tag syntax; normalize Markdown fences to mrkdwn.
+        wrapped = "```\n#{body}\n```"
+        if content.length + wrapped.length > limit && !content.empty?
+          contents << content
+          content = ''
+        end
+        until body.empty?
+          part, body = split_section_text(body, limit - content.length - 8)
+          content += "```\n#{part}\n```"
+          unless body.empty?
+            contents << content
+            content = ''
+          end
+        end
+        content += "```\n\n```" if match[:body].empty?
+        cursor = match.end(0)
+      end
+      append_text.call(source[cursor..-1])
+      contents << content unless content.empty?
+      contents.map { |item| section_text(item) }
+    end
+
+    def split_section_text(value, limit)
+      return [value, ''] if value.length <= limit
+
+      # Prefer complete lines, falling back to characters for oversized lines.
+      boundary = value.rindex("\n", limit - 1)
+      length = boundary ? boundary + 1 : limit
+      # Escaped entities must remain intact across section boundaries.
+      prefix = value[0, length]
+      entity = prefix.rindex('&')
+      length = entity if entity && prefix[entity..-1].match?(/\A&(?:a(?:m(?:p)?)?|l(?:t)?|g(?:t)?)?\z/)
+      [value[0, length], value[length..-1]]
     end
 
     def ordered_list?(value)
